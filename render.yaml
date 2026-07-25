@@ -1,0 +1,33 @@
+# Database is intentionally NOT defined here — Render's free Postgres tier
+# auto-deletes the database after 30 days of the free trial, which would
+# quietly break a long-lived portfolio demo. Using Supabase's free
+# Postgres instead (data isn't deleted, only paused after inactivity, and
+# resuming it is one click) — see docs/deployment/guide.md. Set
+# DATABASE_URL manually to the Supabase pooled connection string below.
+
+services:
+  - type: web
+    name: triage-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /api/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: CORS_ORIGIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "100"
