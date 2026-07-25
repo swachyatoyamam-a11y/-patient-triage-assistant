@@ -11,7 +11,13 @@ services:
     runtime: node
     plan: free
     rootDir: backend
-    buildCommand: npm install && npx prisma generate && npm run build
+    # --include=dev is required here: NODE_ENV=production is set below (and
+    # Render exposes env vars during the build too), which makes a plain
+    # `npm install` skip devDependencies — including typescript itself and
+    # the @types/* packages tsc needs to type-check. The build only ever
+    # needs devDependencies at build time; the compiled dist/ output that
+    # actually runs has no dependency on any of them.
+    buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: node dist/server.js
     healthCheckPath: /api/health/ready
     envVars:
