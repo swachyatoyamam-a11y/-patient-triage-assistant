@@ -1,0 +1,324 @@
+// Intelligent Patient Triage Assistant — Database Schema
+// Postgres via Prisma. See docs/architecture/data-model.md (added Phase 4)
+// for entity-relationship notes and retention/privacy policy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  PATIENT
+  NURSE
+  DOCTOR
+  ADMIN
+}
+
+enum UrgencyLevel {
+  EMERGENCY // red
+  URGENT    // orange
+  MODERATE  // yellow
+  ROUTINE   // green
+}
+
+enum AssessmentStatus {
+  IN_PROGRESS
+  AWAITING_REVIEW
+  REVIEWED
+  RESOLVED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Core identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  authProviderId String   @unique // Clerk/Auth.js subject id
+  email         String    @unique
+  // Only set for accounts created before/without Clerk (local dev, seed
+  // scripts, tests). Never selected by default — controllers must not
+  // include it in any response payload.
+  passwordHash  String?
+  role          UserRole
+  firstName     String
+  lastName      String
+  phone         String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  patientProfile Patient?
+  doctorProfile  Doctor?
+  sessions       Session[]
+  auditLogs      AuditLog[]
+  reviewedAssessments Assessment[] @relation("ReviewingClinician")
+  createdRules  Rule[]      @relation("RuleCreator")
+
+  @@index([role])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  revokedAt    DateTime?
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Patient domain
+// ---------------------------------------------------------------------------
+
+model Patient {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dateOfBirth    DateTime
+  sex            String
+  bloodType      String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  medicalHistory MedicalHistoryEntry[]
+  assessments    Assessment[]
+  appointments   Appointment[]
+  notifications  Notification[]
+}
+
+model MedicalHistoryEntry {
+  id          String   @id @default(cuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  condition   String
+  diagnosedAt DateTime?
+  medications String[]
+  allergies   String[]
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Doctor {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialty      String
+  department     String
+  licenseNumber  String   @unique
+  createdAt      DateTime @default(now())
+
+  appointments   Appointment[]
+}
+
+// ---------------------------------------------------------------------------
+// Triage / assessment domain
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id                String            @id @default(cuid())
+  patientId         String
+  patient           Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  status            AssessmentStatus  @default(IN_PROGRESS)
+
+  // Structured intake answers (age, gender, pain level, duration, etc.)
+  intake            Json
+
+  urgencyLevel      UrgencyLevel?
+  ruleTriggers      RuleTrigger[]
+  recommendation    Recommendation?
+
+  reviewedById      String?
+  reviewedBy        User?             @relation("ReviewingClinician", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  clinicianNotes    String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  symptoms          Symptom[]
+  vitals            Vitals?
+  auditLogs         AuditLog[]
+
+  @@index([patientId])
+  @@index([status])
+  @@index([urgencyLevel])
+}
+
+// Structured vital signs taken at intake — kept as real typed columns
+// (rather than folded into Assessment.intake) so they can be queried,
+// sorted, and validated like any other clinical measurement.
+model Vitals {
+  id                     String     @id @default(cuid())
+  assessmentId           String     @unique
+  assessment             Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  heartRate              Int?       // bpm
+  bloodPressureSystolic  Int?       // mmHg
+  bloodPressureDiastolic Int?       // mmHg
+  temperatureCelsius     Float?
+  oxygenSaturation       Int?       // SpO2 %
+  recordedAt             DateTime   @default(now())
+}
+
+model Symptom {
+  id            String     @id @default(cuid())
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  name          String
+  severity      Int?       // 1-10 patient-reported scale
+  durationHours Int?
+  notes         String?
+  isRedFlag     Boolean    @default(false)
+
+  @@index([assessmentId])
+}
+
+// Deterministic rule engine — rules are data, not code, so clinical staff
+// can review/update them without a deploy.
+model Rule {
+  id           String   @id @default(cuid())
+  name         String
+  description  String
+  // e.g. { "allOf": ["chest_pain", "sweating"] } — evaluated by the rule engine
+  condition    Json
+  resultingUrgency UrgencyLevel
+  isActive     Boolean  @default(true)
+  createdById  String?
+  createdBy    User?    @relation("RuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  triggers     RuleTrigger[]
+
+  @@index([isActive])
+  @@index([createdById])
+}
+
+model RuleTrigger {
+  id            String     @id @default(cuid())
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  ruleId        String
+  rule          Rule       @relation(fields: [ruleId], references: [id])
+  triggeredAt   DateTime   @default(now())
+
+  @@index([assessmentId])
+  @@index([ruleId])
+}
+
+model Recommendation {
+  id                 String     @id @default(cuid())
+  assessmentId       String     @unique
+  assessment         Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  likelyConditions   Json       // string[] with confidence weights, never a diagnosis
+  confidenceScore    Float
+  recommendedDept    String
+  nextSteps          String[]
+  riskFactors        String[]
+  redFlagSymptoms    String[]
+  homeCareAdvice     String?
+  explanation        String     // "why" — required for clinician trust & audit
+  modelName          String     // which AI model produced this
+  modelVersion       String?
+
+  createdAt          DateTime   @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------
+
+model Appointment {
+  id          String            @id @default(cuid())
+  patientId   String
+  patient     Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId    String?
+  doctor      Doctor?           @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  scheduledAt DateTime
+  status      AppointmentStatus @default(SCHEDULED)
+  reason      String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([scheduledAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id         String              @id @default(cuid())
+  patientId  String
+  patient    Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  channel    NotificationChannel
+  status     NotificationStatus  @default(PENDING)
+  subject    String?
+  body       String
+  sentAt     DateTime?
+  createdAt  DateTime            @default(now())
+
+  @@index([patientId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Compliance
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  assessmentId String?
+  assessment   Assessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  action       String      // e.g. "ASSESSMENT_VIEWED", "RULE_UPDATED"
+  metadata     Json?
+  ipAddress    String?
+  createdAt    DateTime    @default(now())
+
+  @@index([userId])
+  @@index([assessmentId])
+  @@index([action])
+}

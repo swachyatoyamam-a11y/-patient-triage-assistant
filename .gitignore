@@ -1,0 +1,20 @@
+node_modules/
+.next/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+.turbo/
+*.tsbuildinfo
+.vercel/
+test-results/
+playwright-report/
+*.bak
+
+# Claude Code local settings — contains this machine's permission history,
+# which can include command strings with tokens/keys used during the
+# session. Never meant for version control (analogous to .env.local).
+.claude/
