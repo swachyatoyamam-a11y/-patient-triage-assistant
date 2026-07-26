@@ -8,6 +8,7 @@ export default function StaffLoginPage() {
         redirectTo="/clinical/dashboard"
         heading="Care team sign in"
         subheading="View the live triage queue and patient assessments."
+        allowedRoles={["NURSE", "DOCTOR"]}
       />
       <p className="mt-6 text-sm text-slate-500 dark:text-slate-400">
         Patient?{" "}

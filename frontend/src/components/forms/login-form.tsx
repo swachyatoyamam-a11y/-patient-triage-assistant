@@ -4,12 +4,20 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { apiFetch, setToken, ApiClientError } from "@/lib/api-client";
+import { apiFetch, setToken, clearToken, ApiClientError } from "@/lib/api-client";
+import type { AppRole } from "@/config/roles";
 
 const loginSchema = z.object({
   email: z.string().email("Enter a valid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
+
+const ROLE_LABELS: Record<AppRole, string> = {
+  PATIENT: "a patient",
+  NURSE: "a care team",
+  DOCTOR: "a care team",
+  ADMIN: "an admin",
+};
 
 type LoginFormProps = {
   /** Where this role lands after a successful sign-in. */
@@ -17,9 +25,11 @@ type LoginFormProps = {
   /** Copy shown above the form, e.g. "Patient sign in". */
   heading: string;
   subheading: string;
+  /** Roles allowed to sign in on this portal — anything else shows an error instead of redirecting. */
+  allowedRoles: AppRole[];
 };
 
-type LoginResponse = { user: { id: string; role: string }; token: string };
+type LoginResponse = { user: { id: string; role: AppRole }; token: string };
 
 /**
  * Presentational + client-validated login form.
@@ -32,7 +42,7 @@ type LoginResponse = { user: { id: string; role: string }; token: string };
  * `apiFetch` call below with `useSignIn()`; nothing downstream (dashboards
  * calling `apiFetch`) needs to change either way.
  */
-export function LoginForm({ redirectTo, heading, subheading }: LoginFormProps) {
+export function LoginForm({ redirectTo, heading, subheading, allowedRoles }: LoginFormProps) {
   const router = useRouter();
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -59,10 +69,20 @@ export function LoginForm({ redirectTo, heading, subheading }: LoginFormProps) {
     setFormError(null);
     setSubmitting(true);
     try {
-      const { token } = await apiFetch<LoginResponse>("/auth/login", {
+      const { user, token } = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify(result.data),
       });
+
+      if (!allowedRoles.includes(user.role)) {
+        clearToken();
+        const expectedLabel = ROLE_LABELS[allowedRoles[0] ?? "PATIENT"];
+        setFormError(
+          `This account is registered as ${ROLE_LABELS[user.role]} account, not ${expectedLabel} account. Use the correct sign-in link below.`
+        );
+        return;
+      }
+
       setToken(token);
       router.push(redirectTo);
     } catch (err) {

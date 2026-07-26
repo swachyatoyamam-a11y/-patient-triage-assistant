@@ -8,6 +8,7 @@ export default function PatientLoginPage() {
         redirectTo="/dashboard"
         heading="Sign in to your care account"
         subheading="Start a symptom assessment or check on a previous one."
+        allowedRoles={["PATIENT"]}
       />
       <p className="mt-6 text-sm text-slate-500 dark:text-slate-400">
         Care team member?{" "}
