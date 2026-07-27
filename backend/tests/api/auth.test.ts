@@ -47,12 +47,53 @@ describe("POST /api/auth/register", () => {
       password: "password123",
       firstName: "Test",
       lastName: "User",
-      role: "ADMIN",
+      role: "PATIENT",
+      dateOfBirth: "1990-01-01",
+      sex: "Female",
     });
     expect(res.status).toBe(409);
   });
 
-  it("creates a new admin account and returns a token", async () => {
+  it("rejects an anonymous request for a privileged role with 401", async () => {
+    const res = await request(app).post("/api/auth/register").send({
+      email: "admin@example.com",
+      password: "password123",
+      firstName: "New",
+      lastName: "Admin",
+      role: "ADMIN",
+    });
+    expect(res.status).toBe(401);
+    expect(mockUserCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-admin's request for a privileged role with 403", async () => {
+    const nurseToken = jwt.sign(
+      { sub: "nurse-1", role: "NURSE", email: "nurse@example.com" },
+      process.env.JWT_SECRET!,
+      { expiresIn: "1h" }
+    );
+
+    const res = await request(app)
+      .post("/api/auth/register")
+      .set("Authorization", `Bearer ${nurseToken}`)
+      .send({
+        email: "admin@example.com",
+        password: "password123",
+        firstName: "New",
+        lastName: "Admin",
+        role: "ADMIN",
+      });
+    expect(res.status).toBe(403);
+    expect(mockUserCreate).not.toHaveBeenCalled();
+  });
+
+  it("lets an authenticated admin create a new admin account", async () => {
+    const adminToken = jwt.sign(
+      { sub: "admin-0", role: "ADMIN", email: "admin0@example.com" },
+      process.env.JWT_SECRET!,
+      { expiresIn: "1h" }
+    );
+
     mockUserFindUnique.mockResolvedValueOnce(null);
     mockUserCreate.mockResolvedValueOnce({
       id: "new-user-1",
@@ -63,13 +104,16 @@ describe("POST /api/auth/register", () => {
       passwordHash: "hashed",
     });
 
-    const res = await request(app).post("/api/auth/register").send({
-      email: "admin@example.com",
-      password: "password123",
-      firstName: "New",
-      lastName: "Admin",
-      role: "ADMIN",
-    });
+    const res = await request(app)
+      .post("/api/auth/register")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        email: "admin@example.com",
+        password: "password123",
+        firstName: "New",
+        lastName: "Admin",
+        role: "ADMIN",
+      });
 
     expect(res.status).toBe(201);
     expect(res.body.token).toBeDefined();

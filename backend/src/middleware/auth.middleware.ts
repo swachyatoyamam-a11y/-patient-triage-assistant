@@ -37,3 +37,20 @@ export function requireRole(...roles: UserRole[]) {
     next();
   };
 }
+
+/**
+ * Self-registration only ever creates PATIENT accounts. Requesting a
+ * staff/admin role (NURSE, DOCTOR, ADMIN) instead requires the caller to
+ * already be authenticated as an ADMIN — otherwise anyone could mint their
+ * own privileged account via the public register endpoint.
+ */
+export function requireAdminForPrivilegedRole(req: Request, res: Response, next: NextFunction) {
+  const role = req.body?.role;
+  if (!role || role === "PATIENT") {
+    return next();
+  }
+  requireAuth(req, res, (err?: unknown) => {
+    if (err) return next(err);
+    requireRole("ADMIN")(req, res, next);
+  });
+}
