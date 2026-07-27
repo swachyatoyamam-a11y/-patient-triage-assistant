@@ -21,6 +21,21 @@ vi.mock("@/lib/api-client", () => ({
 
 import { SymptomChecker } from "@/components/triage/symptom-checker";
 
+async function advanceToTemperatureStep() {
+  const next = () => screen.getByRole("button", { name: /next/i });
+  await userEvent.type(screen.getByPlaceholderText("e.g. 34"), "30");
+  await userEvent.click(next());
+  await userEvent.click(await screen.findByRole("button", { name: "Male" }));
+  await userEvent.click(next());
+  await userEvent.type(await screen.findByPlaceholderText(/chest pain, sore throat/i), "sore throat");
+  await userEvent.click(next());
+  await userEvent.click(await screen.findByRole("button", { name: "3" }));
+  await userEvent.click(next());
+  await userEvent.type(await screen.findByPlaceholderText("e.g. 6"), "12");
+  await userEvent.click(next());
+  expect(await screen.findByText(/temperature/i)).toBeInTheDocument();
+}
+
 describe("SymptomChecker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -58,6 +73,93 @@ describe("SymptomChecker", () => {
     expect(await screen.findByText(/main symptom/i)).toBeInTheDocument();
   });
 
+  it("requires a temperature before Next enables, and defaults to Celsius", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+
+    const nextButton = screen.getByRole("button", { name: /next/i });
+    expect(nextButton).toBeDisabled();
+
+    const tempInput = screen.getByPlaceholderText("e.g. 37.0");
+    await userEvent.type(tempInput, "37.5");
+    expect(nextButton).not.toBeDisabled();
+  });
+
+  it("shows an inline error and blocks Next for an out-of-range Celsius temperature", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+
+    await userEvent.type(screen.getByPlaceholderText("e.g. 37.0"), "50");
+    expect(await screen.findByText(/between 30°C and 45°C/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
+  });
+
+  it("converts the entered temperature when the unit is switched", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+
+    await userEvent.type(screen.getByPlaceholderText("e.g. 37.0"), "37");
+    await userEvent.click(screen.getByRole("button", { name: "°F" }));
+    expect(await screen.findByDisplayValue("98.6")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "°C" }));
+    expect(await screen.findByDisplayValue("37")).toBeInTheDocument();
+  });
+
+  it("shows the correct out-of-range message in Fahrenheit and blocks Next", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+
+    await userEvent.click(screen.getByRole("button", { name: "°F" }));
+    await userEvent.type(screen.getByPlaceholderText("e.g. 98.6"), "80");
+    expect(await screen.findByText(/between 86°F and 113°F/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
+  });
+
+  it("only allows numeric input with up to one decimal place for temperature", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+
+    const tempInput = screen.getByPlaceholderText("e.g. 37.0") as HTMLInputElement;
+    await userEvent.type(tempInput, "3a7.5.6abc");
+    expect(tempInput).toHaveValue("37.5");
+  });
+
+  it("treats pulse rate, SpO2, and blood pressure as optional but validates when entered", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+    const next = () => screen.getByRole("button", { name: /next/i });
+
+    await userEvent.type(screen.getByPlaceholderText("e.g. 37.0"), "37");
+    await userEvent.click(next());
+
+    // Pulse rate — leaving it blank is valid (optional field).
+    expect(await screen.findByText(/pulse rate/i)).toBeInTheDocument();
+    expect(next()).not.toBeDisabled();
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 78"), "10");
+    expect(await screen.findByText(/between 20 and 250 bpm/i)).toBeInTheDocument();
+    expect(next()).toBeDisabled();
+  });
+
+  it("rejects systolic <= diastolic blood pressure with an inline error", async () => {
+    render(<SymptomChecker />);
+    await advanceToTemperatureStep();
+    const next = () => screen.getByRole("button", { name: /next/i });
+
+    await userEvent.type(screen.getByPlaceholderText("e.g. 37.0"), "37");
+    await userEvent.click(next()); // temperature -> pulse rate
+    await userEvent.click(next()); // pulse rate (blank, optional) -> SpO2
+    await userEvent.click(next()); // SpO2 (blank, optional) -> systolic
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 120"), "80");
+    await userEvent.click(next()); // systolic -> diastolic
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 80"), "90");
+    expect(await screen.findByText(/systolic pressure must be greater than diastolic/i)).toBeInTheDocument();
+    expect(next()).toBeDisabled();
+  });
+
   it("drives through every step and submits, showing the result panel on success", async () => {
     apiFetchMock.mockResolvedValueOnce({
       assessment: {
@@ -90,7 +192,21 @@ describe("SymptomChecker", () => {
     await userEvent.type(await screen.findByPlaceholderText("e.g. 6"), "12"); // duration hours
     await userEvent.click(next());
 
-    await userEvent.click(next()); // temperature — optional, skip
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 37.0"), "37.2"); // temperature — mandatory
+    await userEvent.click(next());
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 78"), "82"); // pulse rate
+    await userEvent.click(next());
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 98"), "97"); // SpO2
+    await userEvent.click(next());
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 120"), "118"); // systolic
+    await userEvent.click(next());
+
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 80"), "76"); // diastolic
+    await userEvent.click(next());
+
     await userEvent.click(next()); // additional symptoms — optional, skip
     await userEvent.click(next()); // medical history — optional, skip
     await userEvent.click(next()); // medications — optional, skip
@@ -109,6 +225,11 @@ describe("SymptomChecker", () => {
     expect(body.primarySymptom).toBe("sore throat");
     expect(body.painLevel).toBe(3);
     expect(body.durationHours).toBe(12);
+    expect(body.temperatureCelsius).toBe(37.2);
+    expect(body.heartRate).toBe(82);
+    expect(body.oxygenSaturation).toBe(97);
+    expect(body.bloodPressureSystolic).toBe(118);
+    expect(body.bloodPressureDiastolic).toBe(76);
     expect(body.isPregnant).toBeUndefined();
 
     expect(await screen.findByText("Your assessment has been submitted")).toBeInTheDocument();

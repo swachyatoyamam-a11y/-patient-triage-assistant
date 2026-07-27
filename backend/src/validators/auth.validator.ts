@@ -27,7 +27,6 @@ export const signupSchema = z
     confirmPassword: z.string(),
     phone: z.string().min(7, "Enter a valid phone number"),
     dateOfBirth: z.coerce.date({ errorMap: () => ({ message: "Enter a valid date of birth" }) }),
-    age: z.coerce.number().int().min(0, "Age must be 0 or greater").max(120, "Age must be 120 or less"),
     gender: z.string().min(1, "Gender is required"),
     medicalHistory: z.string().optional(),
     allergies: z.string().optional(),
@@ -41,14 +40,7 @@ export const signupSchema = z
   .refine((data) => data.dateOfBirth.getTime() <= Date.now(), {
     message: "Date of birth cannot be in the future",
     path: ["dateOfBirth"],
-  })
-  .refine(
-    (data) => {
-      const computedAge = Math.floor((Date.now() - data.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-      return Math.abs(computedAge - data.age) <= 1;
-    },
-    { message: "Age does not match the date of birth provided", path: ["age"] }
-  );
+  });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

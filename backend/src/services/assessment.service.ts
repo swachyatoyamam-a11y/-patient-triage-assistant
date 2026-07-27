@@ -18,6 +18,15 @@ export const assessmentService = {
         patientId,
         intake,
         status: "IN_PROGRESS",
+        vitals: {
+          create: {
+            heartRate: intake.heartRate,
+            bloodPressureSystolic: intake.bloodPressureSystolic,
+            bloodPressureDiastolic: intake.bloodPressureDiastolic,
+            temperatureCelsius: intake.temperatureCelsius,
+            oxygenSaturation: intake.oxygenSaturation,
+          },
+        },
       },
     });
 

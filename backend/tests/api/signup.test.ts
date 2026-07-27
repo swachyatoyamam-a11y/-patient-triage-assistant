@@ -21,7 +21,6 @@ const app = createApp();
 // Fixed relative to "now" so the test doesn't rot as the calendar advances.
 const now = new Date();
 const validDateOfBirth = new Date(now.getFullYear() - 30, 0, 15).toISOString();
-const validAge = 30;
 
 const validPayload = {
   fullName: "Ada Lovelace",
@@ -30,7 +29,6 @@ const validPayload = {
   confirmPassword: "password123",
   phone: "+1-555-0100",
   dateOfBirth: validDateOfBirth,
-  age: validAge,
   gender: "Female",
   medicalHistory: "Asthma",
   allergies: "Penicillin",
@@ -55,10 +53,13 @@ describe("POST /api/auth/signup", () => {
     expect(res.body.error.details.confirmPassword?.[0]).toMatch(/passwords do not match/i);
   });
 
-  it("rejects an age that doesn't match the date of birth", async () => {
-    const res = await request(app).post("/api/auth/signup").send({ ...validPayload, age: 5 });
+  it("rejects a date of birth in the future", async () => {
+    const futureDob = new Date(now.getFullYear() + 1, 0, 15).toISOString();
+    const res = await request(app)
+      .post("/api/auth/signup")
+      .send({ ...validPayload, dateOfBirth: futureDob });
     expect(res.status).toBe(400);
-    expect(res.body.error.details.age?.[0]).toMatch(/age does not match/i);
+    expect(res.body.error.details.dateOfBirth?.[0]).toMatch(/cannot be in the future/i);
   });
 
   it("rejects signup when the email already exists", async () => {

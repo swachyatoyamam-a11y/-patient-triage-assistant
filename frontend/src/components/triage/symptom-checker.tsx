@@ -7,7 +7,10 @@ import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { UrgencyBadge } from "@/components/ui/badge";
 import { apiFetch, ApiClientError } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import type { Assessment } from "@/types/api";
+
+type TemperatureUnit = "C" | "F";
 
 type IntakeState = {
   age: string;
@@ -15,7 +18,12 @@ type IntakeState = {
   primarySymptom: string;
   painLevel: string;
   durationHours: string;
-  temperatureCelsius: string;
+  temperatureValue: string;
+  temperatureUnit: TemperatureUnit;
+  heartRate: string;
+  oxygenSaturation: string;
+  bloodPressureSystolic: string;
+  bloodPressureDiastolic: string;
   additionalSymptoms: string;
   medicalHistory: string;
   currentMedications: string;
@@ -29,7 +37,12 @@ const INITIAL_STATE: IntakeState = {
   primarySymptom: "",
   painLevel: "",
   durationHours: "",
-  temperatureCelsius: "",
+  temperatureValue: "",
+  temperatureUnit: "C",
+  heartRate: "",
+  oxygenSaturation: "",
+  bloodPressureSystolic: "",
+  bloodPressureDiastolic: "",
   additionalSymptoms: "",
   medicalHistory: "",
   currentMedications: "",
@@ -41,7 +54,15 @@ type Step = {
   key: keyof IntakeState;
   question: string;
   helper?: string;
-  render: (value: unknown, set: (v: unknown) => void) => React.ReactNode;
+  /** Shows a red asterisk next to the question and (via isValid) blocks
+   * advancing until answered. Omit for genuinely optional steps. */
+  required?: boolean;
+  render: (
+    value: unknown,
+    set: (v: unknown) => void,
+    state: IntakeState,
+    setState: React.Dispatch<React.SetStateAction<IntakeState>>
+  ) => React.ReactNode;
   isValid: (state: IntakeState) => boolean;
   /** Skip this step entirely based on prior answers (e.g. pregnancy only if relevant). */
   skip?: (state: IntakeState) => boolean;
@@ -81,10 +102,197 @@ function ChoiceField({ options, value, onChange }: { options: string[]; value: s
   );
 }
 
+// --- Numeric input helpers -------------------------------------------------
+// Filters keystrokes at entry time (rather than validating after the fact)
+// so letters/symbols simply never make it into the field, per the "numeric
+// only, decimals allowed to one place" requirement.
+
+function isValidDecimalInput(value: string): boolean {
+  return value === "" || /^\d{0,3}(\.\d?)?$/.test(value);
+}
+
+function isValidIntegerInput(value: string): boolean {
+  return value === "" || /^\d{0,3}$/.test(value);
+}
+
+function celsiusToFahrenheit(celsius: number): number {
+  return (celsius * 9) / 5 + 32;
+}
+
+function fahrenheitToCelsius(fahrenheit: number): number {
+  return ((fahrenheit - 32) * 5) / 9;
+}
+
+function roundToOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+const TEMPERATURE_RANGES: Record<TemperatureUnit, { min: number; max: number; message: string }> = {
+  C: { min: 30, max: 45, message: "Please enter a valid human body temperature between 30°C and 45°C." },
+  F: { min: 86, max: 113, message: "Please enter a valid human body temperature between 86°F and 113°F." },
+};
+
+function getTemperatureError(state: IntakeState): string | null {
+  if (state.temperatureValue.trim() === "") return null;
+  const value = Number(state.temperatureValue);
+  if (Number.isNaN(value)) return null;
+  const range = TEMPERATURE_RANGES[state.temperatureUnit];
+  if (value < range.min || value > range.max) return range.message;
+  return null;
+}
+
+function getHeartRateError(state: IntakeState): string | null {
+  if (state.heartRate.trim() === "") return null;
+  const value = Number(state.heartRate);
+  if (Number.isNaN(value) || value < 20 || value > 250) {
+    return "Please enter a valid pulse rate between 20 and 250 bpm.";
+  }
+  return null;
+}
+
+function getOxygenSaturationError(state: IntakeState): string | null {
+  if (state.oxygenSaturation.trim() === "") return null;
+  const value = Number(state.oxygenSaturation);
+  if (Number.isNaN(value) || value < 50 || value > 100) {
+    return "Please enter a valid SpO2 between 50% and 100%.";
+  }
+  return null;
+}
+
+function getSystolicError(state: IntakeState): string | null {
+  if (state.bloodPressureSystolic.trim() === "") return null;
+  const value = Number(state.bloodPressureSystolic);
+  if (Number.isNaN(value) || value < 50 || value > 250) {
+    return "Please enter a valid systolic pressure between 50 and 250 mmHg.";
+  }
+  return null;
+}
+
+function getDiastolicError(state: IntakeState): string | null {
+  if (state.bloodPressureDiastolic.trim() === "") return null;
+  const value = Number(state.bloodPressureDiastolic);
+  if (Number.isNaN(value) || value < 30 || value > 150) {
+    return "Please enter a valid diastolic pressure between 30 and 150 mmHg.";
+  }
+  const systolic = Number(state.bloodPressureSystolic);
+  if (state.bloodPressureSystolic.trim() !== "" && !Number.isNaN(systolic) && systolic <= value) {
+    return "Systolic pressure must be greater than diastolic pressure.";
+  }
+  return null;
+}
+
+function numericFieldClass(error: string | null) {
+  return cn(
+    "w-full rounded-xl border bg-white px-4 py-3 text-base text-slate-900 focus-visible:outline-none focus-visible:ring-2 dark:bg-slate-800 dark:text-white",
+    error
+      ? "border-triage-emergency focus-visible:ring-triage-emergency"
+      : "border-clinical-border focus-visible:ring-clinical-blue dark:border-slate-700"
+  );
+}
+
+function InlineError({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <p role="alert" className="mt-2 text-sm text-triage-emergency">
+      {message}
+    </p>
+  );
+}
+
+function NumericField({
+  value,
+  onChange,
+  placeholder,
+  error,
+  allowDecimal = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  error: string | null;
+  allowDecimal?: boolean;
+}) {
+  const isValidInput = allowDecimal ? isValidDecimalInput : isValidIntegerInput;
+  return (
+    <div>
+      <input
+        autoFocus
+        type="text"
+        inputMode={allowDecimal ? "decimal" : "numeric"}
+        value={value}
+        onChange={(e) => {
+          if (isValidInput(e.target.value)) onChange(e.target.value);
+        }}
+        placeholder={placeholder}
+        className={numericFieldClass(error)}
+      />
+      <InlineError message={error} />
+    </div>
+  );
+}
+
+function TemperatureField({
+  state,
+  setState,
+}: {
+  state: IntakeState;
+  setState: React.Dispatch<React.SetStateAction<IntakeState>>;
+}) {
+  const error = getTemperatureError(state);
+
+  function handleUnitChange(nextUnit: TemperatureUnit) {
+    if (nextUnit === state.temperatureUnit) return;
+    const numeric = Number(state.temperatureValue);
+    const converted =
+      state.temperatureValue.trim() === "" || Number.isNaN(numeric)
+        ? ""
+        : String(roundToOneDecimal(nextUnit === "F" ? celsiusToFahrenheit(numeric) : fahrenheitToCelsius(numeric)));
+    setState((prev) => ({ ...prev, temperatureUnit: nextUnit, temperatureValue: converted }));
+  }
+
+  return (
+    <div>
+      <div className="flex gap-2">
+        <input
+          autoFocus
+          type="text"
+          inputMode="decimal"
+          value={state.temperatureValue}
+          onChange={(e) => {
+            if (isValidDecimalInput(e.target.value)) {
+              setState((prev) => ({ ...prev, temperatureValue: e.target.value }));
+            }
+          }}
+          placeholder={state.temperatureUnit === "C" ? "e.g. 37.0" : "e.g. 98.6"}
+          className={numericFieldClass(error)}
+        />
+        <div className="flex shrink-0 overflow-hidden rounded-xl border border-clinical-border dark:border-slate-700">
+          {(["C", "F"] as const).map((unit) => (
+            <button
+              key={unit}
+              type="button"
+              onClick={() => handleUnitChange(unit)}
+              className={`px-4 py-3 text-sm font-medium transition-colors ${
+                state.temperatureUnit === unit
+                  ? "bg-clinical-blue text-white"
+                  : "bg-white text-slate-600 hover:bg-clinical-gray dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              }`}
+            >
+              °{unit}
+            </button>
+          ))}
+        </div>
+      </div>
+      <InlineError message={error} />
+    </div>
+  );
+}
+
 const STEPS: Step[] = [
   {
     key: "age",
     question: "What is your age?",
+    required: true,
     render: (v, set) => <TextField type="number" value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 34" />,
     isValid: (s) => s.age.trim() !== "" && Number(s.age) >= 0 && Number(s.age) <= 120,
   },
@@ -92,12 +300,14 @@ const STEPS: Step[] = [
     key: "sex",
     question: "What is your sex?",
     helper: "Used to interpret certain symptoms correctly — not shared beyond your care team.",
+    required: true,
     render: (v, set) => <ChoiceField options={["Female", "Male", "Other"]} value={v as string} onChange={set as (v: string) => void} />,
     isValid: (s) => s.sex.trim() !== "",
   },
   {
     key: "primarySymptom",
     question: "What's the main symptom bringing you in today?",
+    required: true,
     render: (v, set) => (
       <TextField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. chest pain, sore throat, head injury" />
     ),
@@ -107,6 +317,7 @@ const STEPS: Step[] = [
     key: "painLevel",
     question: "On a scale of 0–10, how severe is it?",
     helper: "0 is no pain at all, 10 is the worst pain you can imagine.",
+    required: true,
     render: (v, set) => (
       <ChoiceField options={Array.from({ length: 11 }, (_, i) => String(i))} value={v as string} onChange={set as (v: string) => void} />
     ),
@@ -115,15 +326,53 @@ const STEPS: Step[] = [
   {
     key: "durationHours",
     question: "About how many hours have you had this symptom?",
+    required: true,
     render: (v, set) => <TextField type="number" value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 6" />,
     isValid: (s) => s.durationHours.trim() !== "",
   },
   {
-    key: "temperatureCelsius",
-    question: "Do you have a fever? If so, what's your temperature (°C)?",
-    helper: "Leave blank if you haven't taken your temperature or don't have one.",
-    render: (v, set) => <TextField type="number" value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 38.5" />,
-    isValid: () => true,
+    key: "temperatureValue",
+    question: "What's your temperature?",
+    helper: "Switch units any time — your entry converts automatically.",
+    required: true,
+    render: (_v, _set, state, setState) => <TemperatureField state={state} setState={setState} />,
+    isValid: (s) => s.temperatureValue.trim() !== "" && getTemperatureError(s) === null,
+  },
+  {
+    key: "heartRate",
+    question: "What's your pulse rate?",
+    helper: "In beats per minute (bpm). Leave blank if you haven't checked it.",
+    render: (v, set, state) => (
+      <NumericField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 78" error={getHeartRateError(state)} />
+    ),
+    isValid: (s) => getHeartRateError(s) === null,
+  },
+  {
+    key: "oxygenSaturation",
+    question: "What's your oxygen saturation (SpO2)?",
+    helper: "As a percentage. Leave blank if you haven't checked it.",
+    render: (v, set, state) => (
+      <NumericField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 98" error={getOxygenSaturationError(state)} />
+    ),
+    isValid: (s) => getOxygenSaturationError(s) === null,
+  },
+  {
+    key: "bloodPressureSystolic",
+    question: "What's your systolic blood pressure?",
+    helper: "The top number, in mmHg. Leave blank if you haven't checked it.",
+    render: (v, set, state) => (
+      <NumericField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 120" error={getSystolicError(state)} />
+    ),
+    isValid: (s) => getSystolicError(s) === null,
+  },
+  {
+    key: "bloodPressureDiastolic",
+    question: "What's your diastolic blood pressure?",
+    helper: "The bottom number, in mmHg. Leave blank if you haven't checked it.",
+    render: (v, set, state) => (
+      <NumericField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. 80" error={getDiastolicError(state)} />
+    ),
+    isValid: (s) => getDiastolicError(s) === null,
   },
   {
     key: "additionalSymptoms",
@@ -146,6 +395,7 @@ const STEPS: Step[] = [
   {
     key: "isPregnant",
     question: "Is there a chance you're currently pregnant?",
+    required: true,
     skip: (s) => s.sex !== "Female",
     render: (v, set) => (
       <ChoiceField
@@ -202,13 +452,21 @@ export function SymptomChecker() {
 
     setSubmitState({ phase: "submitting" });
     try {
+      const temperatureNumeric = Number(state.temperatureValue);
+      const temperatureCelsius =
+        state.temperatureUnit === "C" ? temperatureNumeric : roundToOneDecimal(fahrenheitToCelsius(temperatureNumeric));
+
       const payload = {
         age: Number(state.age),
         sex: state.sex,
         primarySymptom: state.primarySymptom,
         painLevel: state.painLevel ? Number(state.painLevel) : undefined,
         durationHours: state.durationHours ? Number(state.durationHours) : undefined,
-        temperatureCelsius: state.temperatureCelsius ? Number(state.temperatureCelsius) : undefined,
+        temperatureCelsius,
+        heartRate: state.heartRate ? Number(state.heartRate) : undefined,
+        oxygenSaturation: state.oxygenSaturation ? Number(state.oxygenSaturation) : undefined,
+        bloodPressureSystolic: state.bloodPressureSystolic ? Number(state.bloodPressureSystolic) : undefined,
+        bloodPressureDiastolic: state.bloodPressureDiastolic ? Number(state.bloodPressureDiastolic) : undefined,
         additionalSymptoms: toCsvArray(state.additionalSymptoms),
         medicalHistory: toCsvArray(state.medicalHistory),
         currentMedications: toCsvArray(state.currentMedications),
@@ -278,12 +536,18 @@ export function SymptomChecker() {
           >
             <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-white">
               {currentStep.question}
+              {currentStep.required && (
+                <span className="text-triage-emergency" aria-hidden="true">
+                  {" "}
+                  *
+                </span>
+              )}
             </h2>
             {currentStep.helper && (
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{currentStep.helper}</p>
             )}
             <div className="mt-5">
-              {currentStep.render(state[currentStep.key], (v) => updateField(currentStep.key, v))}
+              {currentStep.render(state[currentStep.key], (v) => updateField(currentStep.key, v), state, setState)}
             </div>
           </motion.div>
         </AnimatePresence>
