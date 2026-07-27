@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "@/lib/prisma";
 import { env } from "@/config/env";
 import { ApiError } from "@/utils/api-error";
-import type { RegisterInput, LoginInput } from "@/validators/auth.validator";
+import type { RegisterInput, LoginInput, SignupInput } from "@/validators/auth.validator";
 
 const SALT_ROUNDS = 12;
 
@@ -11,6 +11,13 @@ function signToken(user: { id: string; role: string; email: string }) {
   return jwt.sign({ sub: user.id, role: user.role, email: user.email }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
+}
+
+/** "Ada Lovelace" -> { firstName: "Ada", lastName: "Lovelace" } — same split
+ * convention prisma/import-patients.ts uses for single-field name sources. */
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/);
+  return { firstName: parts[0]!, lastName: parts.slice(1).join(" ") || parts[0]! };
 }
 
 /** Strips passwordHash before a user object ever leaves the service layer. */
@@ -53,6 +60,48 @@ export const authService = {
             },
           },
         }),
+      },
+    });
+
+    const token = signToken(user);
+    return { user: toPublicUser(user), token };
+  },
+
+  async signup(input: SignupInput) {
+    const existing = await prisma.user.findUnique({ where: { email: input.email } });
+    if (existing) {
+      throw ApiError.conflict("An account with this email already exists");
+    }
+
+    const { firstName, lastName } = splitFullName(input.fullName);
+    const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+    const hasMedicalNotes = Boolean(input.medicalHistory || input.allergies);
+
+    const user = await prisma.user.create({
+      data: {
+        authProviderId: `local:${input.email}`,
+        email: input.email,
+        passwordHash,
+        role: "PATIENT",
+        firstName,
+        lastName,
+        phone: input.phone,
+        patientProfile: {
+          create: {
+            dateOfBirth: input.dateOfBirth,
+            sex: input.gender,
+            emergencyContactName: input.emergencyContactName || null,
+            emergencyContactPhone: input.emergencyContactPhone || null,
+            ...(hasMedicalNotes && {
+              medicalHistory: {
+                create: {
+                  condition: input.medicalHistory || "No prior conditions on record",
+                  allergies: input.allergies ? [input.allergies] : [],
+                },
+              },
+            }),
+          },
+        },
       },
     });
 

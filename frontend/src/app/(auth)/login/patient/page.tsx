@@ -11,6 +11,12 @@ export default function PatientLoginPage() {
         allowedRoles={["PATIENT"]}
       />
       <p className="mt-6 text-sm text-slate-500 dark:text-slate-400">
+        Don&apos;t have an account?{" "}
+        <Link href="/signup" className="font-medium text-clinical-blue hover:underline">
+          Sign Up
+        </Link>
+      </p>
+      <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
         Care team member?{" "}
         <Link href="/login/staff" className="font-medium text-clinical-blue hover:underline">
           Sign in here

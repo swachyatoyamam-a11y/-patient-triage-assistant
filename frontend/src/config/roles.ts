@@ -12,4 +12,4 @@ export const ROLE_ROUTE_PREFIXES = {
 
 export type AppRole = keyof typeof ROLE_ROUTE_PREFIXES;
 
-export const PUBLIC_ROUTES = ["/", "/login/patient", "/login/staff", "/login/admin"];
+export const PUBLIC_ROUTES = ["/", "/login/patient", "/login/staff", "/login/admin", "/signup"];
