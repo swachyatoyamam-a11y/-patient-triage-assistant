@@ -15,7 +15,10 @@ Every error response has the shape:
 ## Auth
 
 ### `POST /auth/register`
-Public. Rate-limited (10 requests / 15 min).
+Public for `role: PATIENT` (the default). Rate-limited (10 requests / 15 min).
+Requesting `role: NURSE | DOCTOR | ADMIN` additionally requires an
+`Authorization: Bearer <token>` for an existing `ADMIN` — this endpoint is
+how admins provision staff accounts, not a public way to self-elevate.
 
 ```json
 // Request
@@ -30,7 +33,14 @@ Public. Rate-limited (10 requests / 15 min).
 }
 ```
 `201` → `{ "user": {...}, "token": "jwt" }` (no `passwordHash` ever included)
-`409` if email already registered · `400` if patient fields missing
+`401` if a privileged role is requested with no/invalid admin token · `403`
+if the caller is authenticated but not an `ADMIN` · `409` if email already
+registered · `400` if patient fields missing
+
+### `POST /auth/signup`
+Public. Rate-limited. Patient-only self-registration — `role` is not a
+client-supplied field here, it's always `PATIENT` server-side. Prefer this
+over `/auth/register` for a public sign-up UI.
 
 ### `POST /auth/login`
 Public. Rate-limited.
