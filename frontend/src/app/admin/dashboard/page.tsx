@@ -84,21 +84,27 @@ export default function AdminDashboardPage() {
   const [volumeRef, volumeWidth] = useElementWidth<HTMLDivElement>();
   const [conditionsRef, conditionsWidth] = useElementWidth<HTMLDivElement>();
 
-  const load = React.useCallback(() => {
+  const load = React.useCallback(async () => {
     setError(null);
-    Promise.all([
-      apiFetch<AnalyticsSummary>("/analytics/summary"),
-      apiFetch<{ symptoms: SymptomFrequency[] }>("/analytics/common-symptoms"),
-      apiFetch<{ assessments: Assessment[] }>("/assessments?limit=500"),
-      apiFetch<ExtendedAnalyticsSummary>("/analytics/extended-summary"),
-    ])
-      .then(([s, sym, a, ext]) => {
-        setSummary(s);
-        setSymptoms(sym.symptoms);
-        setAssessments(a.assessments);
-        setExtended(ext);
-      })
-      .catch((err) => setError(err instanceof ApiClientError ? err.message : "Couldn't load analytics."));
+    try {
+      // Two smaller sequential groups rather than one Promise.all of 4 —
+      // fewer simultaneous DB connections at once, which matters on a
+      // constrained deployment (Render free tier + Supabase's pooler).
+      const [s, sym] = await Promise.all([
+        apiFetch<AnalyticsSummary>("/analytics/summary"),
+        apiFetch<{ symptoms: SymptomFrequency[] }>("/analytics/common-symptoms"),
+      ]);
+      const [a, ext] = await Promise.all([
+        apiFetch<{ assessments: Assessment[] }>("/assessments?limit=500"),
+        apiFetch<ExtendedAnalyticsSummary>("/analytics/extended-summary"),
+      ]);
+      setSummary(s);
+      setSymptoms(sym.symptoms);
+      setAssessments(a.assessments);
+      setExtended(ext);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : "Couldn't load analytics.");
+    }
   }, []);
 
   React.useEffect(() => {

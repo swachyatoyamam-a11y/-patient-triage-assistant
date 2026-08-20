@@ -73,20 +73,13 @@ export const analyticsService = {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600_000);
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 3600_000);
 
-    const [
-      newPatientsThisWeek,
-      newPatientsThisMonth,
-      activePatientIds,
-      reviewPatientIds,
-      recommendationStats,
-      clinicianOverrideCount,
-      aiErrorCount,
-      avgProcessingRows,
-      commonConditionsRaw,
-      abnormalVitalsCount,
-      highRiskConditionPatientIds,
-      volumeRows,
-    ] = await Promise.all([
+    // Run in small sequential batches rather than one giant Promise.all — a
+    // dozen simultaneous Prisma queries can exceed the connection pool
+    // available on a constrained deployment (e.g. Render's free tier
+    // against Supabase's pooler), especially layered on top of the other
+    // concurrent requests the admin dashboard fires on load. This trades a
+    // little latency for not exhausting the pool.
+    const [newPatientsThisWeek, newPatientsThisMonth, activePatientIds] = await Promise.all([
       prisma.patient.count({ where: { user: { createdAt: { gte: sevenDaysAgo } } } }),
       prisma.patient.count({ where: { user: { createdAt: { gte: thirtyDaysAgo } } } }),
       prisma.assessment.findMany({
@@ -94,15 +87,19 @@ export const analyticsService = {
         select: { patientId: true },
         distinct: ["patientId"],
       }),
+    ]);
+
+    const [reviewPatientIds, recommendationStats, clinicianOverrideCount] = await Promise.all([
       prisma.assessment.findMany({
         where: { status: "AWAITING_REVIEW" },
         select: { patientId: true },
         distinct: ["patientId"],
       }),
-      prisma.recommendation.aggregate({
-        _count: true,
-      }),
+      prisma.recommendation.aggregate({ _count: true }),
       prisma.auditLog.count({ where: { action: "URGENCY_OVERRIDDEN" } }),
+    ]);
+
+    const [aiErrorCount, avgProcessingRows, commonConditionsRaw] = await Promise.all([
       prisma.auditLog.count({ where: { action: "AI_ANALYSIS_FAILED" } }),
       prisma.$queryRaw<{ avg_minutes: number | null }[]>`
         SELECT AVG(EXTRACT(EPOCH FROM (r."createdAt" - a."createdAt")) / 60) AS avg_minutes
@@ -116,6 +113,9 @@ export const analyticsService = {
         orderBy: { _count: { name: "desc" } },
         take: 8,
       }),
+    ]);
+
+    const [abnormalVitalsCount, highRiskConditionPatientIds, volumeRows] = await Promise.all([
       prisma.vitals.count({ where: ABNORMAL_VITALS_WHERE }),
       prisma.medicalCondition.findMany({
         where: { status: "ACTIVE", name: { in: HIGH_RISK_CONDITIONS } },
