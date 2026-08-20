@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { UrgencyBadge } from "@/components/ui/badge";
 import { apiFetch, ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import type { Assessment } from "@/types/api";
+import type { Assessment, MedicalProfile } from "@/types/api";
 
 type TemperatureUnit = "C" | "F";
 
@@ -382,8 +382,9 @@ const STEPS: Step[] = [
   },
   {
     key: "medicalHistory",
-    question: "Any relevant medical history? (comma-separated)",
-    render: (v, set) => <TextField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. asthma, diabetes" />,
+    question: "Anything new or different for this visit? (comma-separated, optional)",
+    helper: "Chronic conditions on file in your Medical Profile are already included automatically — this is only for anything extra relevant to today.",
+    render: (v, set) => <TextField value={v as string} onChange={set as (v: string) => void} placeholder="e.g. recent injury, new symptom" />,
     isValid: () => true,
   },
   {
@@ -422,6 +423,16 @@ function toCsvArray(value: string): string[] {
     .filter(Boolean);
 }
 
+function calculateAge(dateOfBirth: string): number | null {
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const monthDiff = now.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : null;
+}
+
 type SubmitState =
   | { phase: "form" }
   | { phase: "submitting" }
@@ -433,6 +444,32 @@ export function SymptomChecker() {
   const [state, setState] = React.useState<IntakeState>(INITIAL_STATE);
   const [stepIndex, setStepIndex] = React.useState(0);
   const [submitState, setSubmitState] = React.useState<SubmitState>({ phase: "form" });
+
+  // Prefill age/sex from the stored medical profile so the patient doesn't
+  // have to re-enter what's already on file — still editable per-visit,
+  // and we never overwrite a value the patient has already started typing.
+  React.useEffect(() => {
+    apiFetch<MedicalProfile>("/patients/me/medical-profile")
+      .then((profile) => {
+        setState((prev) => {
+          const next = { ...prev };
+          if (!next.age) {
+            const age = calculateAge(profile.patient.dateOfBirth);
+            if (age !== null) next.age = String(age);
+          }
+          if (!next.sex) {
+            const known = ["Female", "Male", "Other"];
+            const match = known.find((o) => o.toLowerCase() === profile.patient.sex.toLowerCase());
+            if (match) next.sex = match;
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        // Non-critical — if the profile can't be loaded, the patient just
+        // answers age/sex manually as before.
+      });
+  }, []);
 
   const activeSteps = STEPS.filter((s) => !s.skip?.(state));
   const currentStep = activeSteps[stepIndex];
@@ -493,6 +530,16 @@ export function SymptomChecker() {
 
   if (submitState.phase === "done") {
     const { assessment, notice } = submitState;
+    const snapshot = assessment.healthSnapshot?.snapshot;
+    const profileParts: string[] = [];
+    if (snapshot?.profile?.conditions?.length) {
+      profileParts.push(snapshot.profile.conditions.map((c) => c.name).join(", "));
+    }
+    if (snapshot?.profile?.allergies?.length) {
+      profileParts.push(`allergies: ${snapshot.profile.allergies.map((a) => a.substance).join(", ")}`);
+    }
+    const healthParts = (snapshot?.healthMetrics ?? []).map((m) => `${m.label.toLowerCase()} ${m.value}${m.unit}`);
+
     return (
       <div className="mx-auto max-w-lg rounded-card border border-clinical-border bg-white p-8 text-center dark:bg-slate-900 dark:border-slate-800">
         {assessment.urgencyLevel && (
@@ -507,6 +554,15 @@ export function SymptomChecker() {
           {assessment.recommendation?.explanation ??
             "A member of the care team will review your submission shortly."}
         </p>
+
+        {(profileParts.length > 0 || healthParts.length > 0) && (
+          <div className="mt-4 rounded-xl bg-clinical-gray p-3 text-left text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+            <p className="font-medium text-slate-600 dark:text-slate-300">Automatically included in this assessment:</p>
+            {profileParts.length > 0 && <p className="mt-1">From your medical profile — {profileParts.join("; ")}</p>}
+            {healthParts.length > 0 && <p className="mt-1">From connected health data — {healthParts.join(", ")}</p>}
+          </div>
+        )}
+
         <p className="mt-4 text-xs text-slate-400">{notice}</p>
         <Button className="mt-6" onClick={() => router.push("/dashboard")}>
           Back to dashboard

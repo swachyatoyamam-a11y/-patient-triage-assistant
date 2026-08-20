@@ -56,6 +56,10 @@ export const createAssessmentSchema = z
 export const updateAssessmentSchema = z.object({
   status: z.enum(["IN_PROGRESS", "AWAITING_REVIEW", "REVIEWED", "RESOLVED", "CANCELLED"]).optional(),
   clinicianNotes: z.string().optional(),
+  // Manual clinician override of the AI/rule-engine urgency — this route is
+  // already restricted to NURSE/DOCTOR/ADMIN (see assessment.routes.ts), so
+  // no further role check is needed here.
+  urgencyLevel: z.enum(["EMERGENCY", "URGENT", "MODERATE", "ROUTINE"]).optional(),
 });
 
 export const listAssessmentsQuerySchema = z.object({

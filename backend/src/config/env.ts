@@ -31,6 +31,20 @@ const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(900_000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
+
+  // Health-data / wearable integration (optional — the Demo provider needs
+  // none of these; they only matter once a real OAuth provider like Fitbit
+  // is actually configured).
+  FITBIT_CLIENT_ID: z.string().optional(),
+  FITBIT_CLIENT_SECRET: z.string().optional(),
+  FITBIT_REDIRECT_URI: z.string().optional(),
+  // Where to send the browser back to after an OAuth callback completes.
+  // Falls back to CORS_ORIGIN (the deployed frontend's own URL) below if unset.
+  FRONTEND_URL: z.string().optional(),
+  // Base64-encoded 32-byte AES-256-GCM key, used to encrypt OAuth tokens
+  // before they're written to HealthConnection. Required only once a real
+  // provider is configured — see health/providers/fitbit-provider.ts.
+  HEALTH_TOKEN_ENCRYPTION_KEY: z.string().optional(),
 });
 
 function loadEnv() {

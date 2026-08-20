@@ -3,15 +3,18 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
 } from "recharts";
-import { Users, Siren, Clock, CheckCircle2, Activity, Sparkles, ListChecks } from "lucide-react";
+import {
+  Users, Siren, Clock, CheckCircle2, Activity, Sparkles, ListChecks,
+  UserPlus, ShieldAlert, GitPullRequestArrow, TimerReset, AlertOctagon, HeartPulse,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { UrgencyBadge, Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/shared/stat-card";
 import { ErrorState, Skeleton, EmptyState } from "@/components/shared/states";
 import { apiFetch, ApiClientError } from "@/lib/api-client";
-import type { AnalyticsSummary, Assessment, SymptomFrequency } from "@/types/api";
+import type { AnalyticsSummary, Assessment, SymptomFrequency, ExtendedAnalyticsSummary } from "@/types/api";
 import { URGENCY_META, type UrgencyLevel } from "@/lib/utils";
 
 // Fixed status-severity order — never reordered by count, matches the
@@ -72,11 +75,14 @@ function timeSince(iso: string): string {
 
 export default function AdminDashboardPage() {
   const [summary, setSummary] = React.useState<AnalyticsSummary | null>(null);
+  const [extended, setExtended] = React.useState<ExtendedAnalyticsSummary | null>(null);
   const [symptoms, setSymptoms] = React.useState<SymptomFrequency[] | null>(null);
   const [assessments, setAssessments] = React.useState<Assessment[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [urgencyRef, urgencyWidth] = useElementWidth<HTMLDivElement>();
   const [symptomsRef, symptomsWidth] = useElementWidth<HTMLDivElement>();
+  const [volumeRef, volumeWidth] = useElementWidth<HTMLDivElement>();
+  const [conditionsRef, conditionsWidth] = useElementWidth<HTMLDivElement>();
 
   const load = React.useCallback(() => {
     setError(null);
@@ -84,11 +90,13 @@ export default function AdminDashboardPage() {
       apiFetch<AnalyticsSummary>("/analytics/summary"),
       apiFetch<{ symptoms: SymptomFrequency[] }>("/analytics/common-symptoms"),
       apiFetch<{ assessments: Assessment[] }>("/assessments?limit=500"),
+      apiFetch<ExtendedAnalyticsSummary>("/analytics/extended-summary"),
     ])
-      .then(([s, sym, a]) => {
+      .then(([s, sym, a, ext]) => {
         setSummary(s);
         setSymptoms(sym.symptoms);
         setAssessments(a.assessments);
+        setExtended(ext);
       })
       .catch((err) => setError(err instanceof ApiClientError ? err.message : "Couldn't load analytics."));
   }, []);
@@ -99,7 +107,7 @@ export default function AdminDashboardPage() {
 
   if (error) return <ErrorState message={error} onRetry={load} />;
 
-  const loading = !summary || !assessments || !symptoms;
+  const loading = !summary || !assessments || !symptoms || !extended;
 
   const totalPatients = assessments ? new Set(assessments.map((a) => a.patientId)).size : 0;
   const totalAssessments = assessments?.length ?? 0;
@@ -333,6 +341,174 @@ export default function AdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <div>
+        <h2 className="mb-3 font-display text-lg font-semibold text-slate-900 dark:text-white">
+          Patients &amp; system health
+        </h2>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <StatCard
+            label="New patients (7d)"
+            value={extended?.newPatientsThisWeek}
+            sublabel={extended ? `${extended.newPatientsThisMonth} in 30d` : undefined}
+            icon={UserPlus}
+            accent="blue"
+            loading={loading}
+          />
+          <StatCard
+            label="Active patients (30d)"
+            value={extended?.activePatientCount}
+            icon={Users}
+            accent="blue"
+            loading={loading}
+          />
+          <StatCard
+            label="Requiring review"
+            value={extended?.patientsRequiringReview}
+            sublabel="distinct patients"
+            icon={ListChecks}
+            accent="urgent"
+            loading={loading}
+          />
+          <StatCard
+            label="High-risk patients"
+            value={extended?.highRiskPatientCount}
+            sublabel="chronic condition + recent severe visit"
+            icon={HeartPulse}
+            accent="emergency"
+            loading={loading}
+          />
+          <StatCard
+            label="AI escalation rate"
+            value={extended ? `${Math.round(extended.aiEscalationRate)}%` : undefined}
+            sublabel="AI raised urgency over the rule floor"
+            icon={Sparkles}
+            accent="blue"
+            loading={loading}
+          />
+          <StatCard
+            label="Clinician overrides"
+            value={extended?.clinicianOverrideCount}
+            icon={GitPullRequestArrow}
+            accent="urgent"
+            loading={loading}
+          />
+          <StatCard
+            label="Avg. processing time"
+            value={
+              extended?.averageProcessingMinutes != null ? `${Math.round(extended.averageProcessingMinutes)}m` : "—"
+            }
+            sublabel="assessment to recommendation"
+            icon={TimerReset}
+            accent="routine"
+            loading={loading}
+          />
+          <StatCard
+            label="AI/API errors"
+            value={extended?.aiErrorCount}
+            icon={AlertOctagon}
+            accent="emergency"
+            loading={loading}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-5">
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle>Assessment volume (14 days)</CardTitle>
+            <CardDescription>New assessments submitted per day.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-56 w-full" />
+            ) : !extended || extended.assessmentVolumeOverTime.length === 0 ? (
+              <EmptyState title="No recent activity" description="Volume will chart here once assessments come in." />
+            ) : (
+              <div ref={volumeRef} className="w-full">
+                {volumeWidth > 0 && (
+                  <LineChart width={volumeWidth} height={220} data={extended.assessmentVolumeOverTime}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(d: string) => d.slice(5)}
+                      minTickGap={20}
+                    />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} width={28} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #E2E8F0", fontSize: 13 }} />
+                    <Line
+                      type="monotone"
+                      dataKey="count"
+                      stroke="#2a78d6"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Common conditions on file</CardTitle>
+            <CardDescription>Active conditions across every patient's medical profile.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-56 w-full" />
+            ) : !extended || extended.commonConditions.length === 0 ? (
+              <EmptyState
+                title="No conditions on file"
+                description="Fills in as patients complete their medical profile."
+              />
+            ) : (
+              <div ref={conditionsRef} className="w-full">
+                {conditionsWidth > 0 && (
+                  <BarChart
+                    width={conditionsWidth}
+                    height={Math.max(180, extended.commonConditions.length * 32)}
+                    data={extended.commonConditions.map((c) => ({ name: c.condition, count: c.count }))}
+                    layout="vertical"
+                    margin={{ left: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={120}
+                      tick={{ fontSize: 12 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #E2E8F0", fontSize: 13 }} />
+                    <Bar dataKey="count" fill="#1baf7a" radius={[0, 6, 6, 0]} maxBarSize={18} />
+                  </BarChart>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {!loading && extended && extended.abnormalVitalsCount > 0 && (
+        <Card className="border-triage-moderate/30 bg-triage-moderate/5">
+          <CardContent className="flex items-center gap-3 py-4">
+            <ShieldAlert size={18} className="shrink-0 text-triage-moderate" />
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              <span className="font-medium text-triage-moderate">{extended.abnormalVitalsCount}</span> recorded
+              vitals reading{extended.abnormalVitalsCount === 1 ? "" : "s"} on file outside the normal range —
+              reviewable from each patient's assessment detail.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {!loading && sourceCounts["AI model"] === 0 && (
         <Card className="border-clinical-blue/20 bg-clinical-blue/5">

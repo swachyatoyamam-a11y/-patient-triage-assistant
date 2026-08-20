@@ -2,19 +2,21 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Plus, FileDown } from "lucide-react";
+import { Plus, FileDown, ClipboardList, ArrowRight, HeartPulse, LineChart } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UrgencyBadge } from "@/components/ui/badge";
 import { CardSkeletonList, EmptyState, ErrorState } from "@/components/shared/states";
 import { apiFetch, ApiClientError } from "@/lib/api-client";
-import type { Assessment } from "@/types/api";
+import type { Assessment, MedicalProfile, HealthConnection } from "@/types/api";
 
 type HistoryResponse = { medicalHistory: unknown[]; assessments: Assessment[] };
 
 export default function PatientDashboardPage() {
   const [assessments, setAssessments] = React.useState<Assessment[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [profileIncomplete, setProfileIncomplete] = React.useState(false);
+  const [hasHealthConnection, setHasHealthConnection] = React.useState(true);
 
   const load = React.useCallback(() => {
     setError(null);
@@ -22,6 +24,19 @@ export default function PatientDashboardPage() {
     apiFetch<HistoryResponse>("/patients/me/history")
       .then((res) => setAssessments(res.assessments))
       .catch((err) => setError(err instanceof ApiClientError ? err.message : "Couldn't load your history."));
+
+    apiFetch<MedicalProfile>("/patients/me/medical-profile")
+      .then((p) => setProfileIncomplete(p.conditions.length === 0 && p.allergies.length === 0 && p.medications.length === 0))
+      .catch(() => {
+        // Non-critical — if this fails, we simply don't show the CTA rather
+        // than blocking the whole dashboard on it.
+      });
+
+    apiFetch<{ connections: HealthConnection[] }>("/health-data/connections")
+      .then((res) => setHasHealthConnection(res.connections.some((c) => c.status === "CONNECTED")))
+      .catch(() => {
+        // Non-critical, same as above.
+      });
   }, []);
 
   React.useEffect(() => {
@@ -46,6 +61,77 @@ export default function PatientDashboardPage() {
           </Button>
         </Link>
       </div>
+
+      {profileIncomplete && (
+        <Card className="mb-6 border-clinical-blue/30 bg-clinical-blue/5">
+          <CardContent className="flex flex-col items-start justify-between gap-3 p-5 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <ClipboardList className="mt-0.5 shrink-0 text-clinical-blue" size={22} />
+              <div>
+                <p className="font-display font-semibold text-slate-800 dark:text-slate-100">
+                  Complete your medical profile
+                </p>
+                <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                  Add any existing conditions, allergies, or medications once — future assessments will use it
+                  automatically.
+                </p>
+              </div>
+            </div>
+            <Link href="/profile/medical-history" className="shrink-0">
+              <Button variant="secondary" size="sm">
+                Complete Medical Profile
+                <ArrowRight size={16} />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+
+      {!hasHealthConnection ? (
+        <Card className="mb-6 border-clinical-border bg-white dark:border-slate-800 dark:bg-slate-900">
+          <CardContent className="flex flex-col items-start justify-between gap-3 p-5 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <HeartPulse className="mt-0.5 shrink-0 text-triage-emergency" size={22} />
+              <div>
+                <p className="font-display font-semibold text-slate-800 dark:text-slate-100">
+                  Connect Health Data
+                </p>
+                <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                  Link a wearable or try demo data so recent readings can inform your next assessment.
+                </p>
+              </div>
+            </div>
+            <Link href="/health-data" className="shrink-0">
+              <Button variant="secondary" size="sm">
+                Connect Health Data
+                <ArrowRight size={16} />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="mb-6 border-clinical-border bg-white dark:border-slate-800 dark:bg-slate-900">
+          <CardContent className="flex flex-col items-start justify-between gap-3 p-5 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <LineChart className="mt-0.5 shrink-0 text-clinical-blue" size={22} />
+              <div>
+                <p className="font-display font-semibold text-slate-800 dark:text-slate-100">
+                  View Health Trends
+                </p>
+                <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                  See your recent readings and trends from connected health data sources.
+                </p>
+              </div>
+            </div>
+            <Link href="/health-data" className="shrink-0">
+              <Button variant="secondary" size="sm">
+                View Health Trends
+                <ArrowRight size={16} />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="mb-6">
         <CardHeader>

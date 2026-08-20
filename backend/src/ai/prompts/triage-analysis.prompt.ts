@@ -1,5 +1,7 @@
 import type { Assessment, Symptom } from "@prisma/client";
 import { aiRecommendationSchema } from "@/ai/engine/schema";
+import type { PatientProfileContext } from "@/services/patient-context.service";
+import type { HealthMetricContext } from "@/services/health-context.service";
 
 /**
  * The system prompt carries every hard constraint from the product spec:
@@ -28,6 +30,12 @@ Hard rules, no exceptions:
 6. "redFlagSymptoms" should list anything reported that a clinician would
    want to see flagged immediately, even if your overall urgency level is
    lower — this field is a safety net, not a summary of your top pick.
+7. You may be given the patient's stored medical profile and/or recent
+   connected health-device readings, each in its own clearly labeled
+   section below. Treat both as background CONTEXT that informs your
+   reasoning about the CURRENT symptoms — never as a substitute for them,
+   and never as a reason to invent findings the patient didn't report this
+   visit. If a section is absent, no such data was available; don't guess.
 
 Remember: a licensed clinician reviews every recommendation before any
 action is taken. Your output is an input to their judgment, not a
@@ -36,7 +44,42 @@ replacement for it.`;
 
 type AssessmentWithSymptoms = Assessment & { symptoms: Symptom[] };
 
-export function buildUserPrompt(assessment: AssessmentWithSymptoms): string {
+function buildProfileSection(profile?: PatientProfileContext): string {
+  if (!profile) return "";
+  const conditions = profile.conditions.length > 0 ? profile.conditions.map((c) => c.name).join(", ") : "none on record";
+  const allergies =
+    profile.allergies.length > 0
+      ? profile.allergies.map((a) => (a.severity ? `${a.substance} (${a.severity})` : a.substance)).join(", ")
+      : "none on record";
+  const medications =
+    profile.medications.length > 0
+      ? profile.medications.map((m) => (m.dosage ? `${m.name} (${m.dosage})` : m.name)).join(", ")
+      : "none on record";
+  const surgeries = profile.surgeries.length > 0 ? profile.surgeries.map((s) => s.procedure).join(", ") : "none on record";
+
+  return `\nPatient's stored medical profile (persistent, not entered this visit):
+- Age: ${profile.age}
+- Sex: ${profile.sex}
+- Existing conditions: ${conditions}
+- Allergies: ${allergies}
+- Current medications: ${medications}
+- Previous surgeries: ${surgeries}
+`;
+}
+
+function buildHealthDataSection(metrics?: HealthMetricContext[]): string {
+  if (!metrics || metrics.length === 0) return "";
+  const lines = metrics
+    .map((m) => `- ${m.label}: ${m.value} ${m.unit} (recorded ${m.recordedAt.toISOString()}, source: ${m.source})`)
+    .join("\n");
+  return `\nRecently connected health-device data (patient-authorized readings, most recent per metric):\n${lines}\n`;
+}
+
+export function buildUserPrompt(
+  assessment: AssessmentWithSymptoms,
+  profileContext?: PatientProfileContext,
+  healthContext?: HealthMetricContext[]
+): string {
   const intake = assessment.intake as Record<string, unknown>;
 
   const symptomLines =
@@ -55,7 +98,8 @@ export function buildUserPrompt(assessment: AssessmentWithSymptoms): string {
     .map(([key, value]) => `- ${key}: ${Array.isArray(value) ? value.join(", ") || "none" : String(value ?? "not provided")}`)
     .join("\n");
 
-  return `Patient intake:
+  return `${buildProfileSection(profileContext)}${buildHealthDataSection(healthContext)}
+Patient intake (this visit):
 ${intakeLines}
 
 Reported symptoms:

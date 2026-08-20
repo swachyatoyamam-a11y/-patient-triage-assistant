@@ -34,6 +34,12 @@ or ping the health endpoint a minute beforehand to warm it up.
       installs the exact same dependency tree
 - [ ] No secrets in the diff — `git diff --cached | grep` for API keys,
       passwords, or JWT secrets before every commit
+- [ ] If new Prisma migrations were added: confirm `render.yaml`'s
+      `buildCommand` still includes `npx prisma migrate deploy` (added
+      2026-08-13 — it was previously missing, meaning Render never applied
+      migrations automatically). Without it, a deploy that adds a migration
+      ships code expecting columns/tables the production database doesn't
+      have yet
 
 ## Post-deploy verification (run after every deploy, or when debugging)
 
@@ -62,6 +68,10 @@ or ping the health endpoint a minute beforehand to warm it up.
   `npm install` needs `--include=dev` in the build command (see
   `render.yaml`'s comment) — devDependencies are needed for the build
   step only, not at runtime
+- `HEALTH_TOKEN_ENCRYPTION_KEY` / `FITBIT_CLIENT_ID` / `FITBIT_CLIENT_SECRET`
+  / `FITBIT_REDIRECT_URI` — all optional; unset means Demo Health Data
+  still works and Fitbit shows as "not yet configured" in the UI (not an
+  error)
 
 **Vercel (Project → Settings → Environment Variables):**
 - `NEXT_PUBLIC_API_BASE_URL` — the Render backend URL + `/api`

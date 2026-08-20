@@ -3,7 +3,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockRecommendationUpsert = vi.fn().mockResolvedValue({ id: "rec-1" });
 const mockAssessmentUpdate = vi.fn().mockResolvedValue({});
 const mockAssessmentFindUnique = vi.fn();
+const mockHealthSnapshotUpsert = vi.fn().mockResolvedValue({});
 
+// patientContextService/healthContextService are NOT mocked below (unlike
+// analyzeAssessment) — they run for real and hit this same mocked prisma,
+// find no matching methods, and their internal .catch() degrades them to
+// "no context" (undefined / []). That's intentional: this test only cares
+// about floor-enforcement math, not context assembly, and the graceful
+// degrade is itself part of what's being relied on here.
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     assessment: {
@@ -14,6 +21,7 @@ vi.mock("@/lib/prisma", () => ({
       fn({
         recommendation: { upsert: mockRecommendationUpsert },
         assessment: { update: mockAssessmentUpdate },
+        assessmentHealthSnapshot: { upsert: mockHealthSnapshotUpsert },
       }),
   },
 }));

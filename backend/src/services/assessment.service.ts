@@ -48,6 +48,7 @@ export const assessmentService = {
         vitals: true,
         ruleTriggers: { include: { rule: true } },
         patient: { include: { user: true } },
+        healthSnapshot: true,
       },
     });
     if (!assessment) throw ApiError.notFound("Assessment not found");
@@ -95,6 +96,15 @@ export const assessmentService = {
       userId: reviewerId,
       metadata: { status: input.status },
     });
+
+    if (input.urgencyLevel && input.urgencyLevel !== existing.urgencyLevel) {
+      await auditService.log({
+        action: "URGENCY_OVERRIDDEN",
+        assessmentId: id,
+        userId: reviewerId,
+        metadata: { from: existing.urgencyLevel, to: input.urgencyLevel },
+      });
+    }
 
     return updated;
   },

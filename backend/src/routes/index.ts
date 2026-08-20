@@ -7,6 +7,7 @@ import { reportRoutes } from "@/routes/report.routes";
 import { adminRoutes } from "@/routes/admin.routes";
 import { analyticsRoutes } from "@/routes/analytics.routes";
 import { healthRoutes } from "@/routes/health.routes";
+import { healthDataRoutes } from "@/routes/health-data.routes";
 
 export const apiRouter = Router();
 
@@ -18,3 +19,4 @@ apiRouter.use("/appointments", appointmentRoutes);
 apiRouter.use("/reports", reportRoutes);
 apiRouter.use("/admin", adminRoutes);
 apiRouter.use("/analytics", analyticsRoutes);
+apiRouter.use("/health-data", healthDataRoutes);

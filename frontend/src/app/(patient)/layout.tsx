@@ -1,11 +1,13 @@
 "use client";
 
 import { DashboardShell, type NavLink } from "@/components/dashboard/dashboard-shell";
-import { LayoutDashboard, Stethoscope, CalendarClock, FileText } from "lucide-react";
+import { LayoutDashboard, Stethoscope, CalendarClock, FileText, HeartPulse, UserCog } from "lucide-react";
 
 const navLinks: NavLink[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/assessment/new", label: "New assessment", icon: Stethoscope },
+  { href: "/health-data", label: "Health Data", icon: HeartPulse },
+  { href: "/profile/medical-history", label: "Medical Profile", icon: UserCog },
   { href: "/appointments", label: "Appointments", icon: CalendarClock },
   { href: "/reports", label: "Reports", icon: FileText },
 ];

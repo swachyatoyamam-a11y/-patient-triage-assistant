@@ -19,6 +19,10 @@ inline comments — this page is a consolidated at-a-glance reference.
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | No | Not yet wired to any code — reserved for the notification feature |
 | `SMS_PROVIDER_SID` / `SMS_PROVIDER_AUTH_TOKEN` / `SMS_FROM_NUMBER` | No | Same — reserved, not yet wired |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS` | No | Defaults: 15 min window, 100 requests |
+| `HEALTH_TOKEN_ENCRYPTION_KEY` | Only once a real (non-Demo) health-data provider is connected | Base64-encoded 32-byte AES-256-GCM key for encrypting OAuth tokens at rest (`src/utils/crypto.ts`). Generate with `openssl rand -base64 32`. The Demo Health Data provider needs no secrets at all and works without this being set; it's required the moment a real provider (e.g. Fitbit) is configured, since connecting one writes an encrypted token to `HealthConnection` |
+| `FITBIT_CLIENT_ID` / `FITBIT_CLIENT_SECRET` | No — Fitbit stays shown-but-disabled in the UI until set | Self-service, free registration at `dev.fitbit.com`. Activates the real Fitbit OAuth2 connector (`src/health/providers/fitbit-provider.ts`) automatically once both are present — no code change needed |
+| `FITBIT_REDIRECT_URI` | Only if `FITBIT_CLIENT_ID` is set | Must exactly match the callback URL registered in the Fitbit dev app, e.g. `https://api.example.com/api/health-data/connections/callback/FITBIT` |
+| `FRONTEND_URL` | No (falls back to `CORS_ORIGIN`) | Where the OAuth callback redirects the browser back to after a provider connection completes. Only matters if it needs to differ from `CORS_ORIGIN` |
 
 Validated on boot by `backend/src/config/env.ts` — the process exits
 immediately with a clear error if a required variable is missing or

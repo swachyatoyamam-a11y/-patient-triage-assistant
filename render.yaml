@@ -17,7 +17,11 @@ services:
     # the @types/* packages tsc needs to type-check. The build only ever
     # needs devDependencies at build time; the compiled dist/ output that
     # actually runs has no dependency on any of them.
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
+    # prisma migrate deploy applies any pending migrations against
+    # DATABASE_URL before the new build goes live — without this step,
+    # a deploy that adds a migration (as this one does) ships code that
+    # expects columns/tables the production database doesn't have yet.
+    buildCommand: npm install --include=dev && npx prisma generate && npx prisma migrate deploy && npm run build
     startCommand: node dist/server.js
     healthCheckPath: /api/health/ready
     envVars:
@@ -37,3 +41,13 @@ services:
         value: "900000"
       - key: RATE_LIMIT_MAX_REQUESTS
         value: "100"
+      # Health-data integrations — optional. Demo Health Data works with
+      # none of these set. See docs/deployment/environment-variables.md.
+      - key: HEALTH_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: FITBIT_CLIENT_ID
+        sync: false
+      - key: FITBIT_CLIENT_SECRET
+        sync: false
+      - key: FITBIT_REDIRECT_URI
+        sync: false

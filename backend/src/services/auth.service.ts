@@ -20,6 +20,14 @@ function splitFullName(fullName: string): { firstName: string; lastName: string 
   return { firstName: parts[0]!, lastName: parts.slice(1).join(" ") || parts[0]! };
 }
 
+/** "Diabetes, Hypertension" -> ["Diabetes", "Hypertension"] */
+function parseCsv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
 /** Strips passwordHash before a user object ever leaves the service layer. */
 function toPublicUser<T extends { passwordHash?: string | null }>(user: T) {
   const { passwordHash: _omit, ...publicUser } = user;
@@ -76,6 +84,8 @@ export const authService = {
     const { firstName, lastName } = splitFullName(input.fullName);
     const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
     const hasMedicalNotes = Boolean(input.medicalHistory || input.allergies);
+    const conditionNames = parseCsv(input.medicalHistory);
+    const allergySubstances = parseCsv(input.allergies);
 
     const user = await prisma.user.create({
       data: {
@@ -92,6 +102,7 @@ export const authService = {
             sex: input.gender,
             emergencyContactName: input.emergencyContactName || null,
             emergencyContactPhone: input.emergencyContactPhone || null,
+            // Legacy free-text record — kept for backward compatibility.
             ...(hasMedicalNotes && {
               medicalHistory: {
                 create: {
@@ -99,6 +110,15 @@ export const authService = {
                   allergies: input.allergies ? [input.allergies] : [],
                 },
               },
+            }),
+            // Structured profile (Phase 1) — this is what the assessment
+            // pipeline and the Profile > Medical History page actually
+            // read/edit going forward.
+            ...(conditionNames.length > 0 && {
+              medicalConditions: { create: conditionNames.map((name) => ({ name })) },
+            }),
+            ...(allergySubstances.length > 0 && {
+              allergies: { create: allergySubstances.map((substance) => ({ substance })) },
             }),
           },
         },

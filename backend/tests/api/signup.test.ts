@@ -93,6 +93,12 @@ describe("POST /api/auth/signup", () => {
     expect(createArgs.data.role).toBe("PATIENT");
     expect(createArgs.data.patientProfile.create.sex).toBe("Female");
     expect(createArgs.data.patientProfile.create.medicalHistory.create.allergies).toEqual(["Penicillin"]);
+
+    // Structured profile rows are created alongside the legacy free-text
+    // record — this is what the new Medical History page and the
+    // assessment pipeline actually read going forward.
+    expect(createArgs.data.patientProfile.create.medicalConditions.create).toEqual([{ name: "Asthma" }]);
+    expect(createArgs.data.patientProfile.create.allergies.create).toEqual([{ substance: "Penicillin" }]);
   });
 
   it("does not accept a client-supplied role", async () => {

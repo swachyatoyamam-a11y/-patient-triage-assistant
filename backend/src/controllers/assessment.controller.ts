@@ -6,6 +6,7 @@ import { ruleEngineService } from "@/services/rule-engine.service";
 import { ApiError } from "@/utils/api-error";
 import { logger } from "@/config/logger";
 import { prisma } from "@/lib/prisma";
+import { auditService } from "@/services/audit.service";
 import { listAssessmentsQuerySchema } from "@/validators/assessment.validator";
 
 export const assessmentController = {
@@ -37,6 +38,11 @@ export const assessmentController = {
         assessmentId: assessment.id,
         error: err instanceof Error ? err.message : err,
       });
+      await auditService.log({
+        action: "AI_ANALYSIS_FAILED",
+        assessmentId: assessment.id,
+        metadata: { error: err instanceof Error ? err.message : String(err) },
+      });
     }
 
     const finalAssessment = await assessmentService.getById(assessment.id);
@@ -49,7 +55,17 @@ export const assessmentController = {
   }),
 
   getById: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
     const assessment = await assessmentService.getById(req.params.id!);
+
+    // Clinical staff can view any assessment; a patient may only view their
+    // own — GET /:id has no role guard at the route level (staff need it
+    // for the queue), so ownership must be enforced here instead.
+    if (req.user.role === "PATIENT") {
+      const patient = await prisma.patient.findUnique({ where: { userId: req.user.id } });
+      if (!patient || assessment.patientId !== patient.id) throw ApiError.forbidden();
+    }
+
     res.status(200).json({ assessment });
   }),
 

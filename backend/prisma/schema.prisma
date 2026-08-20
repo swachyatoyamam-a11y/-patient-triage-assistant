@@ -57,6 +57,23 @@ enum NotificationStatus {
   FAILED
 }
 
+enum ConditionStatus {
+  ACTIVE
+  RESOLVED
+}
+
+enum HealthProvider {
+  DEMO
+  FITBIT
+  APPLE_HEALTH
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
 // ---------------------------------------------------------------------------
 // Core identity
 // ---------------------------------------------------------------------------
@@ -121,8 +138,23 @@ model Patient {
   assessments    Assessment[]
   appointments   Appointment[]
   notifications  Notification[]
+
+  // Structured medical profile (Phase 1) — supersedes MedicalHistoryEntry
+  // as the write target for new/edited data; MedicalHistoryEntry is kept
+  // for backward compatibility with data written before this existed.
+  medicalConditions MedicalCondition[]
+  allergies         Allergy[]
+  medications       Medication[]
+  surgeries         Surgery[]
+
+  // Health-device/wearable integration (Phase 2/3).
+  healthConnections HealthConnection[]
+  healthMetrics     HealthMetric[]
 }
 
+// Legacy free-text medical history, written by the original signup flow.
+// Superseded by MedicalCondition/Allergy below for anything new, but kept
+// (not deleted) so no pre-existing patient's data is silently dropped.
 model MedicalHistoryEntry {
   id          String   @id @default(cuid())
   patientId   String
@@ -135,6 +167,126 @@ model MedicalHistoryEntry {
   createdAt   DateTime @default(now())
 
   @@index([patientId])
+}
+
+// One row per chronic/ongoing condition, so a patient can have several
+// (diabetes AND hypertension) each independently editable/resolvable —
+// this is what makes the profile "persistent": stored once here, read by
+// every future assessment instead of being re-typed each time.
+model MedicalCondition {
+  id          String           @id @default(cuid())
+  patientId   String
+  patient     Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name        String           // e.g. "Diabetes", or free text when custom/"Other"
+  status      ConditionStatus  @default(ACTIVE)
+  diagnosedAt DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([patientId])
+}
+
+model Allergy {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  substance String
+  reaction  String?
+  severity  String?  // free text: mild / moderate / severe
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Medication {
+  id        String    @id @default(cuid())
+  patientId String
+  patient   Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name      String
+  dosage    String?
+  frequency String?
+  isActive  Boolean   @default(true)
+  startedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([patientId])
+}
+
+model Surgery {
+  id          String    @id @default(cuid())
+  patientId   String
+  patient     Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  procedure   String
+  performedAt DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([patientId])
+}
+
+// ---------------------------------------------------------------------------
+// Health-device / wearable integration (Phase 2/3)
+// ---------------------------------------------------------------------------
+
+// One row per patient-provider pairing. Tokens are AES-256-GCM encrypted
+// before being written here (see backend/src/utils/crypto.ts) — never
+// stored in plaintext. Disconnecting sets status/disconnectedAt but does
+// NOT delete historical HealthMetric rows, so past readings stay available
+// for the clinical timeline; the AI-context service only ever reads from
+// CONNECTED connections, so disconnecting still stops new data from
+// reaching the assessment pipeline immediately.
+model HealthConnection {
+  id                String            @id @default(cuid())
+  patientId         String
+  patient           Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  provider          HealthProvider
+  status            ConnectionStatus  @default(CONNECTED)
+  scopes            String[]
+  accessTokenEnc    String?
+  refreshTokenEnc   String?
+  tokenExpiresAt    DateTime?
+  externalAccountId String?
+  lastSyncedAt      DateTime?
+  connectedAt       DateTime          @default(now())
+  disconnectedAt    DateTime?
+
+  metrics           HealthMetric[]
+
+  @@unique([patientId, provider])
+  @@index([patientId])
+}
+
+// metricType is an app-level whitelist (see health/metric-types.ts), the
+// same pattern as KNOWN_TAGS for rule conditions — new metric types can
+// ship without a migration.
+model HealthMetric {
+  id           String            @id @default(cuid())
+  patientId    String
+  patient      Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  connectionId String?
+  connection   HealthConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  source       HealthProvider
+  metricType   String
+  value        Float
+  unit         String
+  recordedAt   DateTime
+  syncedAt     DateTime          @default(now())
+  metadata     Json?             // e.g. { synthetic: true } for demo data
+
+  @@index([patientId, metricType, recordedAt])
+  @@index([connectionId])
+}
+
+// Frozen copy of exactly what profile/health context was sent to the AI for
+// a given assessment — audit/explainability, never re-queried live, so a
+// clinician reviewing later sees precisely what the AI saw at the time.
+model AssessmentHealthSnapshot {
+  id           String     @id @default(cuid())
+  assessmentId String     @unique
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  snapshot     Json
+  createdAt    DateTime   @default(now())
 }
 
 model Doctor {
@@ -177,6 +329,7 @@ model Assessment {
   symptoms          Symptom[]
   vitals            Vitals?
   auditLogs         AuditLog[]
+  healthSnapshot    AssessmentHealthSnapshot?
 
   @@index([patientId])
   @@index([status])
@@ -259,6 +412,11 @@ model Recommendation {
   explanation        String     // "why" — required for clinician trust & audit
   modelName          String     // which AI model produced this
   modelVersion       String?
+
+  // True when the AI's own urgency suggestion was more severe than the
+  // deterministic rule-engine floor for this assessment (i.e. the AI caught
+  // something the rules alone wouldn't have) — set in recommendation.service.ts.
+  wasEscalatedByAi   Boolean    @default(false)
 
   createdAt          DateTime   @default(now())
 }

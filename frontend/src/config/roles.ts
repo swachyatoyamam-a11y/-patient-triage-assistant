@@ -4,7 +4,7 @@
  * hard-coding path checks, so role rules stay in one place.
  */
 export const ROLE_ROUTE_PREFIXES = {
-  PATIENT: ["/dashboard", "/assessment", "/appointments", "/reports"],
+  PATIENT: ["/dashboard", "/assessment", "/appointments", "/reports", "/health-data", "/profile"],
   NURSE: ["/clinical"],
   DOCTOR: ["/clinical"],
   ADMIN: ["/admin", "/clinical"], // admins can also view the clinical queue

@@ -39,6 +39,14 @@ async function advanceToTemperatureStep() {
 describe("SymptomChecker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The component fetches the stored medical profile on mount to prefill
+    // age/sex — reject it by default so these tests (which exercise manual
+    // entry) aren't affected; mockResolvedValueOnce calls below for
+    // "/assessments" still take priority over this base implementation.
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === "/patients/me/medical-profile") return Promise.reject(new Error("not mocked in this test"));
+      return Promise.resolve(undefined);
+    });
   });
 
   it("shows the first question (age) and disables Next until it's valid", async () => {
@@ -161,13 +169,21 @@ describe("SymptomChecker", () => {
   });
 
   it("drives through every step and submits, showing the result panel on success", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      assessment: {
-        id: "a1",
-        urgencyLevel: "ROUTINE",
-        recommendation: { explanation: "Symptoms appear mild." },
-      },
-      notice: "This is not a medical diagnosis. Please consult a qualified healthcare professional.",
+    // Path-aware rather than mockResolvedValueOnce: the component's mount-time
+    // profile prefetch is also a call to apiFetch, and would otherwise
+    // consume a queued "Once" value meant for the later /assessments POST.
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === "/assessments") {
+        return Promise.resolve({
+          assessment: {
+            id: "a1",
+            urgencyLevel: "ROUTINE",
+            recommendation: { explanation: "Symptoms appear mild." },
+          },
+          notice: "This is not a medical diagnosis. Please consult a qualified healthcare professional.",
+        });
+      }
+      return Promise.reject(new Error("not mocked in this test"));
     });
 
     render(<SymptomChecker />);
@@ -216,8 +232,8 @@ describe("SymptomChecker", () => {
     expect(await screen.findByText(/lifestyle/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /submit/i }));
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
-    const [path, options] = apiFetchMock.mock.calls[0]!;
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith("/assessments", expect.anything()));
+    const [path, options] = apiFetchMock.mock.calls.find((call) => call[0] === "/assessments")!;
     expect(path).toBe("/assessments");
     const body = JSON.parse((options as { body: string }).body);
     expect(body.age).toBe(30);
@@ -234,5 +250,73 @@ describe("SymptomChecker", () => {
 
     expect(await screen.findByText("Your assessment has been submitted")).toBeInTheDocument();
     expect(screen.getByText("Symptoms appear mild.")).toBeInTheDocument();
+  });
+
+  it("prefills age and sex from the stored medical profile without blocking manual entry", async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === "/patients/me/medical-profile") {
+        return Promise.resolve({
+          patient: { dateOfBirth: "1990-01-15", sex: "Female", bloodType: null, emergencyContactName: null, emergencyContactPhone: null },
+          conditions: [],
+          allergies: [],
+          medications: [],
+          surgeries: [],
+        });
+      }
+      return Promise.reject(new Error("not mocked in this test"));
+    });
+
+    render(<SymptomChecker />);
+
+    const ageInput = (await screen.findByPlaceholderText("e.g. 34")) as HTMLInputElement;
+    await waitFor(() => expect(ageInput.value).not.toBe(""));
+    // Still editable — the patient can override the prefilled value.
+    await userEvent.clear(ageInput);
+    await userEvent.type(ageInput, "40");
+    expect(ageInput).toHaveValue(40);
+  });
+
+  it("shows what was automatically included from the profile and connected health data on the result screen", async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === "/assessments") {
+        return Promise.resolve({
+          assessment: {
+            id: "a1",
+            urgencyLevel: "URGENT",
+            recommendation: { explanation: "Elevated heart rate alongside chest pain." },
+            healthSnapshot: {
+              snapshot: {
+                profile: { conditions: [{ name: "Diabetes" }], allergies: [] },
+                healthMetrics: [{ label: "Heart rate", value: 118, unit: "bpm", recordedAt: "2026-01-01", source: "DEMO" }],
+              },
+            },
+          },
+          notice: "Not a diagnosis.",
+        });
+      }
+      return Promise.reject(new Error("not mocked in this test"));
+    });
+
+    render(<SymptomChecker />);
+    const next = () => screen.getByRole("button", { name: /next/i });
+
+    await userEvent.type(screen.getByPlaceholderText("e.g. 34"), "30");
+    await userEvent.click(next());
+    await userEvent.click(await screen.findByRole("button", { name: "Male" }));
+    await userEvent.click(next());
+    await userEvent.type(await screen.findByPlaceholderText(/chest pain, sore throat/i), "chest pain");
+    await userEvent.click(next());
+    await userEvent.click(await screen.findByRole("button", { name: "5" }));
+    await userEvent.click(next());
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 6"), "1");
+    await userEvent.click(next());
+    await userEvent.type(await screen.findByPlaceholderText("e.g. 37.0"), "37.2");
+    for (let i = 0; i < 8; i++) {
+      await userEvent.click(next());
+    }
+    await userEvent.click(screen.getByRole("button", { name: /submit/i }));
+
+    expect(await screen.findByText(/from your medical profile.*diabetes/i)).toBeInTheDocument();
+    expect(await screen.findByText(/from connected health data.*heart rate 118bpm/i)).toBeInTheDocument();
   });
 });

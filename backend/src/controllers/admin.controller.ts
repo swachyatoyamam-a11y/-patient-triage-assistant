@@ -50,4 +50,14 @@ export const analyticsController = {
     const symptoms = await analyticsService.commonSymptoms();
     res.status(200).json({ symptoms });
   }),
+
+  extendedSummary: asyncHandler(async (_req: Request, res: Response) => {
+    const summary = await analyticsService.extendedSummary();
+    res.status(200).json(summary);
+  }),
+
+  patientDetail: asyncHandler(async (req: Request, res: Response) => {
+    const detail = await analyticsService.patientDetail(req.params.patientId!);
+    res.status(200).json(detail);
+  }),
 };

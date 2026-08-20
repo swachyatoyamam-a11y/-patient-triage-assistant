@@ -2,8 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/utils/api-error";
 import { analyzeAssessment } from "@/ai/engine/analyze-assessment";
 import { auditService } from "@/services/audit.service";
-import { moreSevereUrgency } from "@/utils/urgency";
-import type { UrgencyLevel } from "@prisma/client";
+import { moreSevereUrgency, URGENCY_SEVERITY } from "@/utils/urgency";
+import { patientContextService } from "@/services/patient-context.service";
+import { healthContextService } from "@/services/health-context.service";
+import type { UrgencyLevel, Prisma } from "@prisma/client";
 
 export const recommendationService = {
   /**
@@ -25,9 +27,29 @@ export const recommendationService = {
     });
     if (!assessment) throw ApiError.notFound("Assessment not found");
 
-    const { recommendation, modelName } = await analyzeAssessment(assessment);
+    // Automatic context: the patient's persistent medical profile always
+    // applies; recent health-device data only applies if the patient
+    // currently has an authorized (CONNECTED) provider — see
+    // health-context.service.ts for exactly how that's enforced. Neither
+    // failure here should block the assessment itself, so a lookup error
+    // degrades to "no context" rather than failing the whole analysis.
+    const [profileContext, healthContext] = await Promise.all([
+      patientContextService.getProfileContext(assessment.patientId).catch(() => undefined),
+      healthContextService.getRecentHealthContext(assessment.patientId).catch(() => []),
+    ]);
+
+    const { recommendation, modelName } = await analyzeAssessment(assessment, profileContext, healthContext);
     const finalUrgency =
       moreSevereUrgency(floorUrgency, recommendation.urgencyLevel) ?? recommendation.urgencyLevel;
+
+    // True when the AI's own read of the case was more severe than the
+    // deterministic rule floor — i.e. the AI caught something on its own
+    // that the rules alone wouldn't have flagged. (Not the same as
+    // `finalUrgency !== recommendation.urgencyLevel`, which instead marks
+    // the opposite case: a rule floor pulling the result up past a milder
+    // AI estimate.)
+    const wasEscalatedByAi =
+      Boolean(floorUrgency) && URGENCY_SEVERITY[recommendation.urgencyLevel] < URGENCY_SEVERITY[floorUrgency!];
 
     const explanation =
       finalUrgency !== recommendation.urgencyLevel
@@ -52,6 +74,7 @@ export const recommendationService = {
           homeCareAdvice: recommendation.homeCareAdvice,
           explanation,
           modelName,
+          wasEscalatedByAi,
         },
         update: {
           likelyConditions: recommendation.likelyConditions,
@@ -63,6 +86,7 @@ export const recommendationService = {
           homeCareAdvice: recommendation.homeCareAdvice,
           explanation,
           modelName,
+          wasEscalatedByAi,
         },
       });
 
@@ -74,13 +98,24 @@ export const recommendationService = {
         },
       });
 
+      // Frozen copy of exactly what context the AI saw — audit/explainability,
+      // and what the patient-facing "included from your profile" disclosure
+      // reads from. upsert for the same re-analysis reason as Recommendation
+      // above (AssessmentHealthSnapshot.assessmentId is also unique).
+      const snapshot = { profile: profileContext ?? null, healthMetrics: healthContext ?? [] } as Prisma.InputJsonValue;
+      await tx.assessmentHealthSnapshot.upsert({
+        where: { assessmentId },
+        create: { assessmentId, snapshot },
+        update: { snapshot },
+      });
+
       return rec;
     });
 
     await auditService.log({
       action: "AI_RECOMMENDATION_GENERATED",
       assessmentId,
-      metadata: { aiUrgencyLevel: recommendation.urgencyLevel, finalUrgency, modelName },
+      metadata: { aiUrgencyLevel: recommendation.urgencyLevel, finalUrgency, modelName, wasEscalatedByAi },
     });
 
     return saved;

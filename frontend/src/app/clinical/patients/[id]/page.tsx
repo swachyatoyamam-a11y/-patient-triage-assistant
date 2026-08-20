@@ -5,15 +5,17 @@ import { useParams, useRouter } from "next/navigation";
 import {
   RefreshCw, FileDown, HeartPulse, Thermometer, Gauge, Droplets,
   CheckSquare, Sparkles, ListTree, ShieldAlert, ChevronLeft,
+  Pill, AlertTriangle, Stethoscope, PlugZap, History, SlidersHorizontal,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UrgencyBadge, Badge } from "@/components/ui/badge";
 import { ErrorState, Skeleton } from "@/components/shared/states";
 import { useToast } from "@/components/shared/toast";
+import { HealthTimeline } from "@/components/health/health-timeline";
 import { apiFetch, ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import type { Assessment, AssessmentStatus } from "@/types/api";
+import type { Assessment, AssessmentStatus, PatientDetail, UrgencyLevel } from "@/types/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api";
 
@@ -90,6 +92,9 @@ export default function AssessmentReviewPage() {
   const [notes, setNotes] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [reanalyzing, setReanalyzing] = React.useState(false);
+  const [patientDetail, setPatientDetail] = React.useState<PatientDetail | null>(null);
+  const [overrideUrgency, setOverrideUrgency] = React.useState<UrgencyLevel | "">("");
+  const [overriding, setOverriding] = React.useState(false);
 
   const load = React.useCallback(() => {
     setError(null);
@@ -97,6 +102,15 @@ export default function AssessmentReviewPage() {
       .then((res) => {
         setAssessment(res.assessment);
         setNotes(res.assessment.clinicianNotes ?? "");
+        const patientId = res.assessment.patient?.id;
+        if (patientId) {
+          apiFetch<PatientDetail>(`/analytics/patients/${patientId}`)
+            .then(setPatientDetail)
+            .catch(() => {
+              // Non-critical — the core assessment view still works without
+              // the extended patient-history sections.
+            });
+        }
       })
       .catch((err) => setError(err instanceof ApiClientError ? err.message : "Couldn't load this assessment."));
   }, [params.id]);
@@ -104,6 +118,24 @@ export default function AssessmentReviewPage() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  async function overrideUrgencyLevel() {
+    if (!overrideUrgency) return;
+    setOverriding(true);
+    try {
+      await apiFetch(`/assessments/${params.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ urgencyLevel: overrideUrgency }),
+      });
+      toast.success(`Urgency overridden to ${overrideUrgency}.`);
+      setOverrideUrgency("");
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiClientError ? err.message : "Couldn't override urgency.");
+    } finally {
+      setOverriding(false);
+    }
+  }
 
   async function updateStatus(status: AssessmentStatus) {
     setSaving(true);
@@ -418,6 +450,180 @@ export default function AssessmentReviewPage() {
                   Download report
                 </a>
               </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-clinical-border pt-4 dark:border-slate-800">
+                <SlidersHorizontal size={14} className="shrink-0 text-slate-400" />
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Override urgency:</span>
+                <select
+                  value={overrideUrgency}
+                  onChange={(e) => setOverrideUrgency(e.target.value as UrgencyLevel | "")}
+                  className="rounded-lg border border-clinical-border bg-white px-2 py-1.5 text-xs dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                >
+                  <option value="">Select level…</option>
+                  {(["EMERGENCY", "URGENT", "MODERATE", "ROUTINE"] as UrgencyLevel[]).map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!overrideUrgency || overrideUrgency === assessment.urgencyLevel || overriding}
+                  onClick={overrideUrgencyLevel}
+                >
+                  Apply override
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 sm:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Stethoscope size={16} className="text-clinical-blue" />
+                    <CardTitle className="text-base">Medical history</CardTitle>
+                  </div>
+                  <CardDescription>From the patient's stored profile.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!patientDetail ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : patientDetail.patient.medicalConditions.length === 0 ? (
+                    <p className="text-sm text-slate-400">No conditions on file.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {patientDetail.patient.medicalConditions.map((c) => (
+                        <Tag key={c.id}>
+                          {c.name}
+                          {c.status === "RESOLVED" && " (resolved)"}
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={16} className="text-triage-emergency" />
+                    <CardTitle className="text-base">Allergies</CardTitle>
+                  </div>
+                  <CardDescription>From the patient's stored profile.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!patientDetail ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : patientDetail.patient.allergies.length === 0 ? (
+                    <p className="text-sm text-slate-400">No allergies on file.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {patientDetail.patient.allergies.map((a) => (
+                        <Tag key={a.id} tone="danger">
+                          {a.substance}
+                          {a.severity && ` (${a.severity})`}
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Pill size={16} className="text-clinical-blue" />
+                    <CardTitle className="text-base">Medications</CardTitle>
+                  </div>
+                  <CardDescription>From the patient's stored profile.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!patientDetail ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : patientDetail.patient.medications.filter((m) => m.isActive).length === 0 ? (
+                    <p className="text-sm text-slate-400">No active medications on file.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {patientDetail.patient.medications
+                        .filter((m) => m.isActive)
+                        .map((m) => (
+                          <Tag key={m.id}>
+                            {m.name}
+                            {m.dosage && ` — ${m.dosage}`}
+                          </Tag>
+                        ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <PlugZap size={16} className="text-clinical-blue" />
+                    <CardTitle className="text-base">Connected health sources</CardTitle>
+                  </div>
+                  <CardDescription>Wearable/device connections on file.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!patientDetail ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : patientDetail.patient.healthConnections.length === 0 ? (
+                    <p className="text-sm text-slate-400">No health data sources connected.</p>
+                  ) : (
+                    <ul className="space-y-2 text-sm">
+                      {patientDetail.patient.healthConnections.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between">
+                          <span className="text-slate-700 dark:text-slate-200">{c.provider}</span>
+                          <Badge>{c.status.toLowerCase()}</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+          </div>
+
+          {patientDetail && patientDetail.recentMetrics.length > 0 && (
+            <div>
+              <h3 className="mb-3 flex items-center gap-2 font-display text-base font-semibold text-slate-900 dark:text-white">
+                <HeartPulse size={16} className="text-clinical-blue" />
+                Health data timeline
+              </h3>
+              <HealthTimeline metrics={patientDetail.recentMetrics} loading={false} />
+            </div>
+          )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <History size={16} className="text-slate-400" />
+                <CardTitle className="text-base">Audit history</CardTitle>
+              </div>
+              <CardDescription>Every recorded action tied to this patient.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!patientDetail ? (
+                <Skeleton className="h-24 w-full" />
+              ) : patientDetail.auditLogs.length === 0 ? (
+                <p className="text-sm text-slate-400">No audit entries yet.</p>
+              ) : (
+                <ul className="space-y-2.5 text-sm">
+                  {patientDetail.auditLogs.map((log) => (
+                    <li key={log.id} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-slate-700 dark:text-slate-200">{log.action.replace(/_/g, " ").toLowerCase()}</p>
+                        {log.user && <p className="text-xs text-slate-400">{log.user.email} · {log.user.role}</p>}
+                      </div>
+                      <span className="shrink-0 font-mono text-xs text-slate-400">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
         </div>

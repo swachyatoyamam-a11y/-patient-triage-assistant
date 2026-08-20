@@ -8,6 +8,8 @@ import { GeminiProvider } from "@/ai/engine/providers/gemini-provider";
 import { AnthropicProvider } from "@/ai/engine/providers/anthropic-provider";
 import { OpenAiProvider } from "@/ai/engine/providers/openai-provider";
 import { env } from "@/config/env";
+import type { PatientProfileContext } from "@/services/patient-context.service";
+import type { HealthMetricContext } from "@/services/health-context.service";
 
 type AssessmentWithSymptoms = Assessment & { symptoms: Symptom[] };
 
@@ -33,10 +35,12 @@ function extractJson(raw: string): unknown {
 
 async function requestOnce(
   provider: AiProvider,
-  assessment: AssessmentWithSymptoms
+  assessment: AssessmentWithSymptoms,
+  profileContext?: PatientProfileContext,
+  healthContext?: HealthMetricContext[]
 ): Promise<AiRecommendation> {
   const system = buildSystemPrompt();
-  const user = buildUserPrompt(assessment);
+  const user = buildUserPrompt(assessment, profileContext, healthContext);
   const raw = await provider.complete(system, user);
   const parsed = extractJson(raw);
   return aiRecommendationSchema.parse(parsed);
@@ -54,12 +58,14 @@ async function requestOnce(
  * BEFORE this and can short-circuit it entirely for clear-cut cases.
  */
 export async function analyzeAssessment(
-  assessment: AssessmentWithSymptoms
+  assessment: AssessmentWithSymptoms,
+  profileContext?: PatientProfileContext,
+  healthContext?: HealthMetricContext[]
 ): Promise<{ recommendation: AiRecommendation; modelName: string }> {
   const provider = selectProvider();
 
   try {
-    const recommendation = await requestOnce(provider, assessment);
+    const recommendation = await requestOnce(provider, assessment, profileContext, healthContext);
     return { recommendation, modelName: provider.modelName };
   } catch (firstError) {
     logger.warn("AI analysis first attempt failed, retrying once", {
@@ -68,7 +74,7 @@ export async function analyzeAssessment(
     });
 
     try {
-      const recommendation = await requestOnce(provider, assessment);
+      const recommendation = await requestOnce(provider, assessment, profileContext, healthContext);
       return { recommendation, modelName: provider.modelName };
     } catch (secondError) {
       logger.error("AI analysis failed after retry", {
