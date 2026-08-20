@@ -22,3 +22,10 @@ healthDataRoutes.post("/connections/:provider/connect", healthDataController.con
 healthDataRoutes.post("/connections/:provider/sync", healthDataController.sync);
 healthDataRoutes.delete("/connections/:provider", healthDataController.disconnect);
 healthDataRoutes.get("/metrics", healthDataController.listMetrics);
+
+// Shared ingest endpoint for native-app-only providers (Apple Health,
+// Google Health Connect) — a future companion app calls this with a batch
+// of already-normalized readings, authenticated the same way as every
+// other route in this file (JWT + PATIENT role, ownership resolved from
+// the token, never from a client-supplied patientId).
+healthDataRoutes.post("/connections/:provider/ingest", healthDataController.ingest);

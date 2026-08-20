@@ -57,14 +57,21 @@ describe("Health data endpoints", () => {
     const res = await request(app).get("/api/health-data/providers").set("Authorization", `Bearer ${token()}`);
     expect(res.status).toBe(200);
     const ids = res.body.providers.map((p: { id: string }) => p.id);
-    expect(ids).toEqual(expect.arrayContaining(["DEMO", "FITBIT", "APPLE_HEALTH"]));
+    expect(ids).toEqual(expect.arrayContaining(["DEMO", "FITBIT", "APPLE_HEALTH", "GOOGLE_HEALTH_CONNECT"]));
 
     const demo = res.body.providers.find((p: { id: string }) => p.id === "DEMO");
     expect(demo.configured).toBe(true);
+    expect(demo.requiresNativeApp).toBe(false);
 
     const apple = res.body.providers.find((p: { id: string }) => p.id === "APPLE_HEALTH");
     expect(apple.configured).toBe(false);
+    expect(apple.requiresNativeApp).toBe(true);
     expect(apple.unavailableReason).toMatch(/no public web API/i);
+
+    const googleHealthConnect = res.body.providers.find((p: { id: string }) => p.id === "GOOGLE_HEALTH_CONNECT");
+    expect(googleHealthConnect.configured).toBe(false);
+    expect(googleHealthConnect.requiresNativeApp).toBe(true);
+    expect(googleHealthConnect.unavailableReason).toMatch(/no cloud API/i);
 
     const fitbit = res.body.providers.find((p: { id: string }) => p.id === "FITBIT");
     expect(fitbit.configured).toBe(false); // no FITBIT_CLIENT_ID set in test env

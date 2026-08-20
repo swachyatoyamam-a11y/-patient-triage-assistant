@@ -162,7 +162,7 @@ export interface Surgery {
   createdAt: string;
 }
 
-export type HealthProviderId = "DEMO" | "FITBIT" | "APPLE_HEALTH";
+export type HealthProviderId = "DEMO" | "FITBIT" | "APPLE_HEALTH" | "GOOGLE_HEALTH_CONNECT";
 export type HealthConnectionStatus = "CONNECTED" | "DISCONNECTED" | "ERROR";
 
 export interface HealthProviderInfo {
@@ -170,6 +170,7 @@ export interface HealthProviderInfo {
   label: string;
   configured: boolean;
   requiresOAuth: boolean;
+  requiresNativeApp: boolean;
   unavailableReason: string | null;
 }
 

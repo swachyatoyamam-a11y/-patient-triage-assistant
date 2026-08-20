@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { asyncHandler } from "@/utils/async-handler";
 import { ApiError } from "@/utils/api-error";
 import { healthConnectionService } from "@/services/health-connection.service";
-import { metricsQuerySchema } from "@/validators/health-data.validator";
+import { metricsQuerySchema, healthIngestSchema } from "@/validators/health-data.validator";
 import { env } from "@/config/env";
 
 function userId(req: Request): string {
@@ -55,5 +55,15 @@ export const healthDataController = {
       to: query.to,
     });
     res.status(200).json({ metrics });
+  }),
+
+  // Shared push-ingest path for any requiresNativeApp provider (Apple
+  // Health, Google Health Connect). Validation of every reading (metric
+  // type, unit, physiological range, future-timestamp rejection) happens
+  // in healthIngestSchema before this handler ever runs.
+  ingest: asyncHandler(async (req: Request, res: Response) => {
+    const { readings } = healthIngestSchema.parse(req.body);
+    const result = await healthConnectionService.ingest(userId(req), req.params.provider!, readings);
+    res.status(201).json(result);
   }),
 };

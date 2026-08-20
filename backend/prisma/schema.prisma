@@ -66,6 +66,7 @@ enum HealthProvider {
   DEMO
   FITBIT
   APPLE_HEALTH
+  GOOGLE_HEALTH_CONNECT
 }
 
 enum ConnectionStatus {
@@ -274,6 +275,16 @@ model HealthMetric {
   syncedAt     DateTime          @default(now())
   metadata     Json?             // e.g. { synthetic: true } for demo data
 
+  // The native platform's own per-sample identifier (e.g. a HealthKit
+  // HKSample UUID, or a Health Connect record ID) — set only by push-based
+  // ingestion from a native companion app (see health-data.controller.ts
+  // `ingest`). Pull-based providers (Demo, Fitbit) never set this, so it's
+  // NULL for every existing row; Postgres treats NULL as distinct in a
+  // unique index, so this constraint only ever de-duplicates rows that
+  // actually supplied an id — existing sync behavior is unaffected.
+  externalRecordId String?
+
+  @@unique([patientId, source, externalRecordId])
   @@index([patientId, metricType, recordedAt])
   @@index([connectionId])
 }

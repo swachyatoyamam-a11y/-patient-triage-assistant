@@ -44,3 +44,24 @@ export const METRIC_LABELS: Record<HealthMetricType, string> = {
   ACTIVE_MINUTES: "Active minutes",
   WEIGHT_KG: "Weight",
 };
+
+/**
+ * Physiologically plausible bounds per metric type — the API boundary for
+ * ingested (and, where applicable, patient-entered) readings. Deliberately
+ * explicit rather than inferred: a healthcare app must never guess at what
+ * counts as a valid value. Heart rate / SpO2 / temperature / blood pressure
+ * bounds mirror the same ranges already enforced on patient-entered vitals
+ * in assessment.validator.ts, kept in sync manually for consistency.
+ */
+export const HEALTH_METRIC_RANGES: Record<HealthMetricType, { min: number; max: number }> = {
+  HEART_RATE: { min: 20, max: 250 },
+  RESTING_HEART_RATE: { min: 20, max: 250 },
+  BLOOD_PRESSURE_SYSTOLIC: { min: 50, max: 250 },
+  BLOOD_PRESSURE_DIASTOLIC: { min: 30, max: 150 },
+  SPO2: { min: 50, max: 100 },
+  TEMPERATURE_C: { min: 30, max: 45 },
+  STEPS: { min: 0, max: 100_000 },
+  SLEEP_MINUTES: { min: 0, max: 1440 },
+  ACTIVE_MINUTES: { min: 0, max: 1440 },
+  WEIGHT_KG: { min: 2, max: 500 },
+};

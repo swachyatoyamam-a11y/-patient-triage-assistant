@@ -22,12 +22,20 @@ vi.mock("@/components/shared/toast", () => ({
 import HealthDataPage from "@/app/(patient)/health-data/page";
 
 const PROVIDERS = [
-  { id: "DEMO", label: "Demo Health Data", configured: true, requiresOAuth: false, unavailableReason: null },
+  {
+    id: "DEMO",
+    label: "Demo Health Data",
+    configured: true,
+    requiresOAuth: false,
+    requiresNativeApp: false,
+    unavailableReason: null,
+  },
   {
     id: "FITBIT",
     label: "Fitbit",
     configured: false,
     requiresOAuth: true,
+    requiresNativeApp: false,
     unavailableReason: "Requires a Fitbit developer app.",
   },
   {
@@ -35,7 +43,16 @@ const PROVIDERS = [
     label: "Apple Health",
     configured: false,
     requiresOAuth: false,
+    requiresNativeApp: true,
     unavailableReason: "Apple Health has no public web API — requires a native companion app.",
+  },
+  {
+    id: "GOOGLE_HEALTH_CONNECT",
+    label: "Google Health Connect",
+    configured: false,
+    requiresOAuth: false,
+    requiresNativeApp: true,
+    unavailableReason: "Google Health Connect has no cloud API — requires a native companion app.",
   },
 ];
 
@@ -57,12 +74,14 @@ describe("HealthDataPage", () => {
     expect(await screen.findByText("Demo Health Data")).toBeInTheDocument();
     expect(screen.getByText("Fitbit")).toBeInTheDocument();
     expect(screen.getByText("Apple Health")).toBeInTheDocument();
+    expect(screen.getByText("Google Health Connect")).toBeInTheDocument();
     expect(screen.getByText(/Requires a Fitbit developer app/)).toBeInTheDocument();
     expect(screen.getByText(/no public web API/)).toBeInTheDocument();
+    expect(screen.getByText(/Health Connect has no cloud API/)).toBeInTheDocument();
 
     // Unconfigured providers' Connect buttons are disabled, not hidden.
     const connectButtons = screen.getAllByRole("button", { name: /connect$/i });
-    expect(connectButtons).toHaveLength(3);
+    expect(connectButtons).toHaveLength(4);
 
     const fitbitCard = screen.getByText("Fitbit").closest('[class*="rounded-card"]') as HTMLElement;
     expect(within(fitbitCard).getByRole("button", { name: /connect$/i })).toBeDisabled();

@@ -3,6 +3,7 @@ import { ApiError } from "@/utils/api-error";
 import { auditService } from "@/services/audit.service";
 import { encryptToken } from "@/utils/crypto";
 import { HEALTH_PROVIDERS, getProvider } from "@/health/registry";
+import type { HealthIngestInput } from "@/validators/health-data.validator";
 import type { HealthProvider as HealthProviderEnum, Prisma } from "@prisma/client";
 
 async function requirePatientId(userId: string): Promise<string> {
@@ -22,6 +23,7 @@ export const healthConnectionService = {
       label: p.label,
       configured: p.isConfigured(),
       requiresOAuth: Boolean(p.requiresOAuth),
+      requiresNativeApp: Boolean(p.requiresNativeApp),
       unavailableReason: p.isConfigured() ? null : p.unavailableReason?.() ?? "Not available.",
     }));
   },
@@ -188,5 +190,72 @@ export const healthConnectionService = {
       orderBy: { recordedAt: "desc" },
       take: 500,
     });
+  },
+
+  /**
+   * Shared ingest path for any `requiresNativeApp` provider (Apple Health,
+   * Google Health Connect, or a future one) — the exact same code handles
+   * all of them via the `provider` route param, rather than one pipeline
+   * per platform. Readings arrive already validated (see
+   * validators/health-data.validator.ts) — this layer's job is ownership,
+   * persistence, and idempotency, not re-checking medical plausibility.
+   *
+   * Creates the HealthConnection lazily on first successful ingest (there
+   * is no separate "register device" step for MVP purposes) and reuses the
+   * exact same HealthMetric table every other provider writes to — nothing
+   * downstream (timeline, AI context, clinical/admin views) needs to know
+   * this reading came from a native app rather than a sync.
+   */
+  async ingest(userId: string, providerId: string, readings: HealthIngestInput["readings"]) {
+    const patientId = await requirePatientId(userId);
+    const provider = getProvider(providerId);
+    if (!provider.requiresNativeApp) {
+      throw ApiError.badRequest(
+        `${provider.label} does not accept ingested readings — it syncs via ${provider.requiresOAuth ? "OAuth" : "the standard connect/sync flow"} instead.`
+      );
+    }
+
+    const { connection, ingestedCount } = await prisma.$transaction(async (tx) => {
+      const conn = await tx.healthConnection.upsert({
+        where: { patientId_provider: { patientId, provider: provider.id as HealthProviderEnum } },
+        create: { patientId, provider: provider.id as HealthProviderEnum, status: "CONNECTED", scopes: [] },
+        update: { status: "CONNECTED", disconnectedAt: null },
+      });
+
+      // skipDuplicates relies on the (patientId, source, externalRecordId)
+      // unique index — readings that supply externalId are idempotent
+      // against resubmission; readings without one always insert fresh,
+      // since Postgres never treats two NULLs as a conflict.
+      const created = await tx.healthMetric.createMany({
+        data: readings.map((r) => ({
+          patientId,
+          connectionId: conn.id,
+          source: provider.id as HealthProviderEnum,
+          metricType: r.metricType,
+          value: r.value,
+          unit: r.unit,
+          recordedAt: r.recordedAt,
+          externalRecordId: r.externalId ?? null,
+        })),
+        skipDuplicates: true,
+      });
+
+      await tx.healthConnection.update({ where: { id: conn.id }, data: { lastSyncedAt: new Date() } });
+
+      return { connection: conn, ingestedCount: created.count };
+    });
+
+    await auditService.log({
+      action: "HEALTH_DATA_INGESTED",
+      userId,
+      metadata: { provider: provider.id, submitted: readings.length, ingested: ingestedCount },
+    });
+
+    return {
+      connectionId: connection.id,
+      submitted: readings.length,
+      ingested: ingestedCount,
+      skipped: readings.length - ingestedCount,
+    };
   },
 };
