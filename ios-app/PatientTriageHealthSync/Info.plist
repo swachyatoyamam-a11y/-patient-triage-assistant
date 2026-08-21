@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Shown on the HealthKit consent screen — required for any read
+         access request. This app never writes to HealthKit, so no
+         NSHealthUpdateUsageDescription is declared (least privilege: don't
+         request/declare capability this app doesn't use). -->
+    <key>NSHealthShareUsageDescription</key>
+    <string>Patient Triage Health Sync reads your Steps and Heart Rate so your care team's triage assistant can consider your recent activity. You choose what to share, and can disconnect at any time.</string>
+
+    <key>UILaunchScreen</key>
+    <dict/>
+</dict>
+</plist>

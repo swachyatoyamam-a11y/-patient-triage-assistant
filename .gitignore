@@ -13,6 +13,8 @@ coverage/
 test-results/
 playwright-report/
 *.bak
+.idea/
+*.iml
 
 # Claude Code local settings — contains this machine's permission history,
 # which can include command strings with tokens/keys used during the
